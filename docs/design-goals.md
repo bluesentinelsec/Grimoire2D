@@ -237,6 +237,7 @@ Additional success signals:
 - Performance / Steam Deck opt-in API surface and any associated modes or profiles.
 - How much "screen template" scaffolding (title screen, options, etc.) lives in the core library vs. being easy patterns in documentation/demos.
 - Whether any supplemental tools (e.g. a basic editor) ship inside the pip package or live only in the repository.
+- Data model shapes and ownership details (see `docs/proposals/0001-data-model-architecture.md` and the incremental implementation plan in `docs/proposals/0002-minimal-game-loop-incremental-plan.md`).
 
 These will be closed through implementation spikes, profiling, and small design notes as work proceeds.
 
@@ -252,4 +253,4 @@ When in doubt, prefer:
 - Full CI coverage on Windows + macOS + Linux
 - Follow known successful patterns in video game engines
 
-**Immediate next steps (suggested):** Propose top-level directory and package layout (see AGENTS.md for the mandated structure), create initial skeleton with `g2d` namespace under `src/grimoire2d/`, renderer spike (OpenGL 3.30 core + basic batched sprite + shader loading), VFS spike, physics library evaluation, and a minimal "hello world" game loop that exercises configuration and hot-reload paths. **All work must obey AGENTS.md** (architecturally correct code only — no quick fixes, hacks, or half-measures). All spikes and code must be checked against both this charter and AGENTS.md.
+**Immediate next steps (suggested):** Per the user's modular approach and Proposal 0002, execute the small chunks in `docs/proposals/0002-minimal-game-loop-incremental-plan.md` (starting with scaffolding + first data model slice) to reach the first user-facing milestone (open window + minimal managed game loop) while spanning model/logic/view in an architecturally correct way. All work must obey AGENTS.md (no quick fixes, hacks, or half-measures) and the data model / business logic / presentation separation. Check everything against the charter, AGENTS.md, 0001, and 0002.

@@ -48,20 +48,20 @@ The Engine (core) owns/co-ordinates subsystems. Subsystems do **not** import the
 ### Rendering (Non-Negotiable)
 - **Day one and forever**: OpenGL 3.30 core profile only. No legacy paths, no `pygame.Surface.blit` in the hot path, no software fallbacks for primary content.
 - Batching is **mandatory** for performance. The public API must never expose the caller to "you must batch yourself".
-- All GL state changes, VAO/VBO/UBO/Texture binding, shader use, etc. are encapsulated inside `graphics/renderer.py` + `graphics/gl/` or equivalent. Other modules (GUI, particles, lighting, even debug overlays) **must** go through the batcher/renderer API.
+- All GL state changes, VAO/VBO/UBO/Texture binding, shader use, etc. are encapsulated inside `presentation/renderer.py` + `presentation/gl/` or equivalent. Other modules (GUI, particles, lighting, even debug overlays) **must** go through the batcher/renderer API.
 - Shaders: First-class. Support both embedded strings (Raylib-style) and files. Compilation errors must be excellent. Hot reload must recompile and swap atomically where possible.
 - Lighting/fog/post: Designed as part of the pipeline from the beginning (not bolted on). Support arbitrary lights via culling + batching/GPU upload (no hard-coded light counts in shaders). GPU particles required.
 - Resolution independence: integer scaling + letterboxing is the model. Camera + viewport handled centrally.
 - The renderer owns the main framebuffer(s) and post chain.
 
-If you ever feel the need to call `gl*` or `moderngl` directly from outside graphics/, you are violating the architecture. Create the proper abstraction instead.
+If you ever feel the need to call `gl*` or `moderngl` directly from outside presentation/, you are violating the architecture. Create the proper abstraction instead.
 
 ### Explicitness & No Magic
 - No hidden globals that magically affect behavior (except the single active Engine instance during a `run()`, and even that must be explicit).
 - No decorators that hide control flow or registration (unless the decorator is the *only* public API and its effect is trivial and documented in one place).
 - No monkey-patching. No `if TYPE_CHECKING` hacks to break import cycles — fix the cycle by proper layering.
 - Configuration is explicit and runtime-mutable. Systems that care register interest or poll the current config snapshot.
-- Namespaces: `from grimoire2d.graphics import Camera` or `import grimoire2d.graphics as gfx`. Avoid dumping everything into the top `grimoire2d` namespace except the absolute minimum (run, App, version, etc.).
+- Namespaces: `from grimoire2d.presentation import Camera` or `import grimoire2d.presentation as pres`. Avoid dumping everything into the top `grimoire2d` namespace except the absolute minimum (run, App, version, etc.).
 - Prefer composition and protocols (PEP 544) over deep inheritance for extension points.
 
 ### SOLID + Testability
@@ -101,7 +101,7 @@ If you ever feel the need to call `gl*` or `moderngl` directly from outside grap
 - **Docstrings**: Every public (and most internal) function, class, and module gets a docstring describing purpose, parameters, returns, important side-effects, invariants, and when it is safe to call. NumPy or Google style — be consistent.
 - **Function size**: Small. If a function does two things, split it. SRP applies to functions too.
 - **Comments**: Only for *why* (architectural decisions, non-obvious tradeoffs, engine patterns being followed). Never for "what" if the code + name already say it. No tactical "fix for issue #123" comments that rot.
-- **Imports**: Absolute within the package. Group stdlib, third-party, local. Use `import grimoire2d.graphics as graphics` style inside the lib for clarity.
+- **Imports**: Absolute within the package. Group stdlib, third-party, local. Use `import grimoire2d.presentation as presentation` style inside the lib for clarity.
 - **No print, no pdb in library code**. Use `logging.getLogger(__name__)` with proper levels.
 - **Mutable vs immutable**: Document the contract. Positions/velocities in games are typically mutated in place for perf — provide clear `copy()` / immutable views when needed.
 - **Third-party deps**: Only mature, stable, performant, minimal-transitive-dep libraries. Pin versions in pyproject.toml. Never GPL/AGPL that would infect user games. pygame-ce is blessed. pymunk (or evaluated alternative) for physics. Minimal else.
@@ -110,7 +110,7 @@ If you ever feel the need to call `gl*` or `moderngl` directly from outside grap
 ## 5. Subsystem-Specific Guidelines
 
 - **Core / Loop**: Fixed/variable timestep options. Delta time everywhere for logic. Configurable max FPS. Proper pause. Runtime config changes (resolution, fullscreen, audio) must propagate correctly without leaks or lost state.
-- **Graphics/Renderer**: One canonical way to draw. Everything funnels through batch + current camera + current shader state managed by the renderer. Lighting and post are not "add-ons".
+- **Presentation/Renderer**: One canonical way to draw. Everything funnels through batch + current camera + current shader state managed by the renderer. Lighting and post are not "add-ons". (The top-level package for this is `presentation/`.)
 - **Assets/VFS**: The single source of truth. Loaders are thin adapters on top of VFS + format-specific parsing. Hot reload protocol is part of the contract for any reloadable resource.
 - **GUI**: Must be able to drive a full editor. Event routing, focus, layout, input integration, and drawing must all be correct and use the same graphics path. Theming is real (not a stub).
 - **Physics**: Thin wrapper. Do not re-implement broad/narrow phase. Provide debug draw that uses the graphics system. Bodies/queries exposed cleanly.
@@ -138,7 +138,7 @@ When a new concern appears (e.g. achievements, Steam integration), treat it as a
 - Global mutable state that is not the single documented Engine instance (and even then, keep its surface tiny).
 - Leaking GL state, pygame state, or physics state between unrelated systems.
 - Bypassing the VFS for any asset.
-- Raw GL calls outside the graphics subsystem.
+- Raw GL calls outside the presentation subsystem.
 - Magic that makes "only one way" impossible to discover by reading the module structure.
 - Adding a feature by editing a giant `if` or `match` in core code instead of extending via new classes / registration / composition.
 - Writing code without considering hot-reload, PyInstaller, the three platforms, and testability.
