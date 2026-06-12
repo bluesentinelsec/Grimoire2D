@@ -14,20 +14,29 @@ Games define their own models and compose (see EngineConfig docstring).
 from . import title
 from . import video
 from . import timing
+from . import lifecycle
+from . import input
+from . import app_state
 
 from .base import DataModel, register_extension
 from .config import EngineConfig
+from .app_state import AppState
 
 # Re-export the individual models for convenience
 from .title import TitleSetting
 from .video import VideoSettings
 from .timing import TimingSettings
+from .lifecycle import LifecycleState
+from .input import InputState
 
 __all__ = [
     "DataModel",
     "register_extension",
     "EngineConfig",
+    "AppState",
     "TitleSetting",
     "VideoSettings",
     "TimingSettings",
+    "LifecycleState",
+    "InputState",
 ]
