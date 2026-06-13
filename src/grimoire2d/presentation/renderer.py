@@ -142,6 +142,8 @@ class Renderer:
         self._bar_color = (20, 20, 30, 255)  # dark bars outside letterbox
         self._game_clear = (0, 0, 0, 255)    # will be overridden from VideoSettings
 
+        self._frame_textures: list[moderngl.Texture] = []
+
     def set_virtual_resolution(self, virtual: VirtualResolution) -> None:
         """Update the game virtual resolution at runtime (data driven).
 
@@ -199,6 +201,12 @@ class Renderer:
         )
         r, g, b, a = (c / 255.0 for c in self._game_clear)
         self.ctx.clear(r, g, b, a)
+
+        # Enable blending so text (which uses alpha from the font texture for
+        # glyph shape + antialiasing) composites correctly over the background.
+        # Solid rects/border use alpha=1 so they are unaffected.
+        self.ctx.enable(moderngl.BLEND)
+        self.ctx.blend_func = (moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA)
 
     def draw_rect(
         self,
@@ -330,6 +338,7 @@ class Renderer:
         # Future: texture atlas, caching by (text, font_size), or SDF fonts.
         tex_data = surf.get_buffer().raw
         texture = self.ctx.texture((tw, th), 4, tex_data)
+        texture.filter = (moderngl.LINEAR, moderngl.LINEAR)
         texture.use(0)
 
         # Use the same offset/scale pattern as draw_rect, but on the textured program.
@@ -341,7 +350,10 @@ class Renderer:
 
         self._text_vao.render()
 
-        texture.release()
+        # Keep the texture alive until the end of the frame.
+        # Releasing immediately after render() can cause the GPU to sample
+        # a deleted texture on some drivers/configs (result: invisible text).
+        self._frame_textures.append(texture)
 
     def measure_text(self, text: str, *, font_size: int = 32, scale: float = 1.0) -> tuple[float, float]:
         """Return the (width, height) in virtual units the text would occupy.
@@ -377,5 +389,11 @@ class Renderer:
         With pygame + moderngl the pygame.display.flip() after this
         (or ctx.finish()) is usually sufficient.
         """
+        # Release any textures used for text (or sprites) this frame.
+        # We kept them alive so the draw commands could actually sample them.
+        for tex in self._frame_textures:
+            tex.release()
+        self._frame_textures.clear()
+
         # moderngl does not do the swap; the caller (window) does flip.
         pass
