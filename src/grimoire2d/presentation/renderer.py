@@ -28,6 +28,8 @@ from grimoire2d.models import VirtualResolution
 from grimoire2d.presentation.shaders import (
     get_default_fragment_shader,
     get_default_vertex_shader,
+    get_textured_fragment_shader,
+    get_textured_vertex_shader,
 )
 
 
@@ -103,10 +105,38 @@ class Renderer:
         self._quad_vbo = self.ctx.buffer(quad_data.tobytes())
         self._quad_vao = self.ctx.simple_vertex_array(self.program, self._quad_vbo, "in_pos")
 
+        # Textured quad for text (and future 2D sprites). Includes texcoords with y-flip
+        # so pygame-rendered text surfaces map correctly into GL.
+        textured_quad_data = array.array(
+            "f",
+            [
+                0.0, 0.0, 0.0, 1.0,  # pos + tex (y flipped)
+                1.0, 0.0, 1.0, 1.0,
+                1.0, 1.0, 1.0, 0.0,
+                0.0, 0.0, 0.0, 1.0,
+                1.0, 1.0, 1.0, 0.0,
+                0.0, 1.0, 0.0, 0.0,
+            ],
+        )
+        self._textured_quad_vbo = self.ctx.buffer(textured_quad_data.tobytes())
+
+        # Compile textured program (for text)
+        tvert = get_textured_vertex_shader()
+        tfrag = get_textured_fragment_shader()
+        self.text_program = self.ctx.program(
+            vertex_shader=tvert,
+            fragment_shader=tfrag,
+        )
+        self._text_vao = self.ctx.vertex_array(
+            self.text_program,
+            [(self._textured_quad_vbo, "2f 2f", "in_pos", "in_texcoord")],
+        )
+
         self._projection: tuple[float, ...] = _ortho(
             0.0, float(self._virt.width), 0.0, float(self._virt.height)
         )
         self.program["u_projection"].value = self._projection
+        self.text_program["u_projection"].value = self._projection
 
         # Reasonable defaults for demo visuals
         self._bar_color = (20, 20, 30, 255)  # dark bars outside letterbox
@@ -128,6 +158,7 @@ class Renderer:
             0.0, float(self._virt.width), 0.0, float(self._virt.height)
         )
         self.program["u_projection"].value = self._projection
+        self.text_program["u_projection"].value = self._projection
 
     def handle_physical_resize(self, physical_width: int, physical_height: int) -> None:
         """React to a window resize (or initial size, or fullscreen change).
@@ -223,6 +254,122 @@ class Renderer:
         self.draw_rect(
             self._virt.width - 260, self._virt.height - 140, 200, 100, (0.3, 0.9, 0.4, 1.0)
         )
+
+        # Text primitive demo (proves runtime string, color, alpha, scale + logical coords)
+        self.draw_text(
+            f"Virtual: {self._virt.width}x{self._virt.height}  (press 1-4 to change)",
+            40,
+            20,
+            color=(1.0, 1.0, 0.2, 1.0),
+            scale=1.0,
+            font_size=26,
+        )
+        self.draw_text(
+            "Text is a primitive. Full logical surface scales + letterboxes correctly.",
+            40,
+            55,
+            color=(0.7, 0.9, 1.0, 0.9),  # slight transparency
+            scale=0.75,
+            font_size=18,
+        )
+
+    # --- Text primitive support ---
+
+    def _get_font(self, size: int):
+        """Lazy cache for pygame fonts (default system font for the primitive).
+
+        Font size is the base render size; the `scale` parameter in draw_text
+        then multiplies the resulting quad size in virtual coordinates.
+        """
+        if not hasattr(self, "_fonts"):
+            self._fonts = {}
+        if size not in self._fonts:
+            # Font(None, size) gives a reasonable platform default.
+            # Later we can support explicit font paths (via VFS for games).
+            self._fonts[size] = pygame.font.Font(None, size)
+        return self._fonts[size]
+
+    def draw_text(
+        self,
+        text: str,
+        x: float,
+        y: float,
+        *,
+        color: tuple[float, float, float, float] = (1.0, 1.0, 1.0, 1.0),
+        scale: float = 1.0,
+        font_size: int = 32,
+    ) -> None:
+        """Draw text as a primitive in *virtual* (logical) coordinates.
+
+        This is the foundational text drawing capability. The string, color
+        (with alpha for transparency), and scale can all be changed every frame.
+
+        - (x, y) is the top-left of the text in the current virtual resolution.
+        - `scale` multiplies the rendered size (in virtual units).
+        - `font_size` is the base pygame font size used for rasterization.
+        - Color tints the (white) rendered text and applies alpha.
+
+        All drawing happens through the current logical viewport/projection,
+        so text automatically respects the same scaling + letterboxing as
+        everything else.
+
+        This primitive is intended as a building block for higher-level GUI
+        (TK-like) and console systems.
+        """
+        if not text:
+            return
+
+        font = self._get_font(font_size)
+        # Render white; shader does the runtime tint (color + alpha)
+        surf = font.render(text, True, (255, 255, 255)).convert_alpha()
+        tw, th = surf.get_size()
+        if tw <= 0 or th <= 0:
+            return
+
+        # Upload as GL texture (RGBA). For a primitive this is acceptable.
+        # Future: texture atlas, caching by (text, font_size), or SDF fonts.
+        tex_data = surf.get_buffer().raw
+        texture = self.ctx.texture((tw, th), 4, tex_data)
+        texture.use(0)
+
+        # Use the same offset/scale pattern as draw_rect, but on the textured program.
+        # The quad size in virtual space = (font pixels * scale)
+        self.text_program["u_offset"].value = (float(x), float(y))
+        self.text_program["u_scale"].value = (float(tw) * scale, float(th) * scale)
+        self.text_program["u_color"].value = color
+        self.text_program["u_texture"].value = 0
+
+        self._text_vao.render()
+
+        texture.release()
+
+    def measure_text(self, text: str, *, font_size: int = 32, scale: float = 1.0) -> tuple[float, float]:
+        """Return the (width, height) in virtual units the text would occupy.
+
+        Useful for layout helpers when building GUI or console systems on top
+        of this primitive.
+        """
+        if not text:
+            return 0.0, 0.0
+        font = self._get_font(font_size)
+        tw, th = font.size(text)
+        return tw * scale, th * scale
+
+    def draw_text_centered(
+        self,
+        text: str,
+        cx: float,
+        cy: float,
+        *,
+        color: tuple[float, float, float, float] = (1.0, 1.0, 1.0, 1.0),
+        scale: float = 1.0,
+        font_size: int = 32,
+    ) -> None:
+        """Centered variant of the text primitive (common for UI/console titles etc)."""
+        w, h = self.measure_text(text, font_size=font_size, scale=scale)
+        x = cx - w / 2.0
+        y = cy - h / 2.0
+        self.draw_text(text, x, y, color=color, scale=scale, font_size=font_size)
 
     def present(self) -> None:
         """Swap / finish the frame.

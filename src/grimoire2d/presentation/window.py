@@ -93,6 +93,7 @@ def open_and_run(app_state: AppState | None = None) -> None:
     virt = get_virtual_resolution(app_state.engine)
 
     pygame.init()
+    pygame.font.init()  # for the text primitive
     _set_gl_context_attributes()
 
     width, height = effective.width, effective.height

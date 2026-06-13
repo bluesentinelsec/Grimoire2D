@@ -51,3 +51,50 @@ def get_default_vertex_shader() -> str:
 def get_default_fragment_shader() -> str:
     """Return the vendored solid-color fragment shader source."""
     return FRAGMENT_SHADER
+
+
+# Textured quad shader for text (and future sprites/UI).
+# Uses per-draw offset/scale in virtual space + tint color (for runtime color/alpha).
+# Texcoords are set up with y-flip to match pygame surface -> GL texture.
+TEXTURED_VERTEX_SHADER = """#version 330 core
+
+in vec2 in_pos;
+in vec2 in_texcoord;
+
+out vec2 v_texcoord;
+
+uniform mat4 u_projection;
+uniform vec2 u_offset;
+uniform vec2 u_scale;
+
+void main() {
+    vec2 p = in_pos * u_scale + u_offset;
+    gl_Position = u_projection * vec4(p, 0.0, 1.0);
+    v_texcoord = in_texcoord;
+}
+"""
+
+TEXTURED_FRAGMENT_SHADER = """#version 330 core
+
+in vec2 v_texcoord;
+
+uniform sampler2D u_texture;
+uniform vec4 u_color;
+
+out vec4 frag_color;
+
+void main() {
+    vec4 tex = texture(u_texture, v_texcoord);
+    frag_color = tex * u_color;
+}
+"""
+
+
+def get_textured_vertex_shader() -> str:
+    """Return the vendored textured vertex shader (for text and sprites)."""
+    return TEXTURED_VERTEX_SHADER
+
+
+def get_textured_fragment_shader() -> str:
+    """Return the vendored textured fragment shader (tints texture by u_color for runtime color/alpha/scale)."""
+    return TEXTURED_FRAGMENT_SHADER
