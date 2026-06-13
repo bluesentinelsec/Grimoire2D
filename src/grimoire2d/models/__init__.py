@@ -19,6 +19,7 @@ from . import input
 from . import app_state
 from . import window_settings
 from . import build_config
+from . import virtual_resolution
 
 from .base import DataModel, register_extension
 from .config import EngineConfig
@@ -32,6 +33,7 @@ from .lifecycle import LifecycleState
 from .input import InputState
 from .window_settings import WindowSettings
 from .build_config import BuildConfig
+from .virtual_resolution import VirtualResolution
 
 __all__ = [
     "DataModel",
@@ -45,4 +47,5 @@ __all__ = [
     "InputState",
     "WindowSettings",
     "BuildConfig",
+    "VirtualResolution",
 ]
