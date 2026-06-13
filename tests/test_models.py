@@ -20,7 +20,9 @@ from grimoire2d.models import (
     LifecycleState,
     InputState,
     AppState,
+    VirtualResolution,
 )
+from grimoire2d.logic.scaling import Viewport, compute_viewport, get_virtual_resolution
 
 
 class TestLifecycleState(unittest.TestCase):
@@ -139,6 +141,155 @@ class TestAppState(unittest.TestCase):
         d = state.to_dict()
         restored = AppState.from_dict(d)
         self.assertEqual(restored, state)
+
+
+class TestVirtualResolution(unittest.TestCase):
+    def test_default_is_1280x720(self):
+        vr = VirtualResolution()
+        self.assertEqual(vr.width, 1280)
+        self.assertEqual(vr.height, 720)
+        self.assertTrue(vr.integer_scaling)
+
+    def test_custom_and_validation(self):
+        vr = VirtualResolution(width=640, height=360, integer_scaling=False)
+        self.assertEqual(vr.width, 640)
+        self.assertFalse(vr.integer_scaling)
+
+        with self.assertRaises(ValueError):
+            VirtualResolution(width=0, height=720)
+
+        with self.assertRaises(ValueError):
+            VirtualResolution(width=1280, height=-10)
+
+    def test_roundtrip_and_with_updates(self):
+        vr = VirtualResolution(width=1920, height=1080)
+        d = vr.to_dict()
+        restored = VirtualResolution.from_dict(d)
+        self.assertEqual(restored, vr)
+
+        updated = vr.with_updates(width=1280, height=720)
+        self.assertEqual(updated.width, 1280)
+        self.assertEqual(updated.height, 720)
+        self.assertEqual(vr.width, 1920)  # original unchanged
+
+
+class TestScalingLogic(unittest.TestCase):
+    """Pure tests for the scaling / letterboxing math (no GL, no window)."""
+
+    def test_exact_match(self):
+        vr = VirtualResolution(width=1280, height=720)
+        vp = compute_viewport(vr, 1280, 720)
+        self.assertIsInstance(vp, Viewport)
+        self.assertEqual(vp.scale, 1.0)
+        self.assertEqual(vp.offset_x, 0)
+        self.assertEqual(vp.offset_y, 0)
+        self.assertEqual(vp.viewport_width, 1280)
+        self.assertEqual(vp.viewport_height, 720)
+
+    def test_wider_physical_pillarbox_integer(self):
+        vr = VirtualResolution(width=1280, height=720, integer_scaling=True)
+        vp = compute_viewport(vr, 1920, 720)
+        self.assertEqual(vp.scale, 1.0)
+        self.assertEqual(vp.offset_x, 320)
+        self.assertEqual(vp.offset_y, 0)
+        self.assertEqual(vp.viewport_width, 1280)
+
+    def test_taller_physical_letterbox(self):
+        vr = VirtualResolution(width=1280, height=720)
+        vp = compute_viewport(vr, 1280, 1080)
+        self.assertEqual(vp.scale, 1.0)
+        self.assertEqual(vp.offset_y, 180)
+        self.assertEqual(vp.viewport_height, 720)
+
+    def test_integer_double_scale(self):
+        vr = VirtualResolution(width=1280, height=720)
+        vp = compute_viewport(vr, 2560, 1440)
+        self.assertEqual(vp.scale, 2.0)
+        self.assertEqual(vp.offset_x, 0)
+        self.assertEqual(vp.offset_y, 0)
+        self.assertEqual(vp.viewport_width, 2560)
+
+    def test_fractional_when_integer_disabled(self):
+        vr = VirtualResolution(width=1280, height=720, integer_scaling=False)
+        # 1500x780 gives fractional scale limited by the height dimension
+        vp = compute_viewport(vr, 1500, 780)
+        self.assertAlmostEqual(vp.scale, 780 / 720, places=4)
+        self.assertGreater(vp.offset_x, 0)
+
+    def test_small_physical_downscales_to_show_full_logical_surface(self):
+        """When the physical window is smaller than the virtual resolution,
+        we must still show the *entire* logical scene, just scaled down.
+        This was the reported issue: content must not disappear or collapse.
+        """
+        vr = VirtualResolution(width=1280, height=720)
+        vp = compute_viewport(vr, 640, 360)
+        self.assertAlmostEqual(vp.scale, 0.5, places=5)
+        self.assertEqual(vp.viewport_width, 640)
+        self.assertEqual(vp.viewport_height, 360)
+        # The scaled logical surface exactly fits the physical window in this case
+        self.assertLessEqual(vp.viewport_width, 640)
+        self.assertLessEqual(vp.viewport_height, 360)
+
+    def test_zero_physical_falls_back(self):
+        vr = VirtualResolution(width=1280, height=720)
+        vp = compute_viewport(vr, 0, 0)
+        self.assertEqual(vp.physical_width, 1280)
+        self.assertEqual(vp.physical_height, 720)
+
+    def test_full_logical_surface_always_fits(self):
+        """Core correctness property requested by the user.
+
+        No matter what physical window size (as long as positive),
+        the computed viewport must never be larger than the physical
+        window in either dimension. This guarantees the entire logical
+        (virtual) scene is always visible, just scaled + letterboxed.
+        """
+        vr = VirtualResolution(width=1280, height=720, integer_scaling=True)
+
+        # A range of realistic shrinking, matching, and expanding cases
+        physical_sizes = [
+            (100, 100), (320, 200), (640, 360), (800, 450), (1000, 600),
+            (1280, 720), (1280, 600), (1366, 768), (1440, 900),
+            (1600, 900), (1920, 1080), (2560, 1440), (3000, 2000),
+            (500, 2000), (2000, 500),  # extreme aspect ratios
+        ]
+
+        for pw, ph in physical_sizes:
+            with self.subTest(physical=f"{pw}x{ph}"):
+                vp = compute_viewport(vr, pw, ph)
+                self.assertLessEqual(
+                    vp.viewport_width, pw,
+                    f"viewport wider than physical for {pw}x{ph}"
+                )
+                self.assertLessEqual(
+                    vp.viewport_height, ph,
+                    f"viewport taller than physical for {pw}x{ph}"
+                )
+                self.assertGreater(vp.scale, 0)
+                self.assertGreaterEqual(vp.offset_x, 0)
+                self.assertGreaterEqual(vp.offset_y, 0)
+
+    def test_get_virtual_resolution_with_compute(self):
+        """Integration between data model and scaling logic.
+
+        This is how the presentation layer will actually use it at runtime.
+        """
+        from grimoire2d.models import EngineConfig
+
+        engine = EngineConfig.default()
+        # Replace the default with a non-standard virtual res
+        engine = engine.with_updates(
+            extensions={"virtual_resolution": VirtualResolution(640, 360)}
+        )
+
+        vr = get_virtual_resolution(engine)
+        self.assertEqual(vr.width, 640)
+        self.assertEqual(vr.height, 360)
+
+        vp = compute_viewport(vr, 1280, 720)
+        self.assertEqual(vp.scale, 2.0)  # integer upscaling from 640x360
+        self.assertEqual(vp.viewport_width, 1280)
+        self.assertEqual(vp.viewport_height, 720)
 
 
 if __name__ == "__main__":
