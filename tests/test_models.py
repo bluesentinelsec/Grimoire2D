@@ -22,7 +22,7 @@ from grimoire2d.models import (
     AppState,
     VirtualResolution,
 )
-from grimoire2d.logic.scaling import Viewport, compute_viewport
+from grimoire2d.logic.scaling import Viewport, compute_viewport, get_virtual_resolution
 
 
 class TestLifecycleState(unittest.TestCase):
@@ -216,17 +216,80 @@ class TestScalingLogic(unittest.TestCase):
         self.assertAlmostEqual(vp.scale, 780 / 720, places=4)
         self.assertGreater(vp.offset_x, 0)
 
-    def test_small_physical_clamps_to_scale_one(self):
+    def test_small_physical_downscales_to_show_full_logical_surface(self):
+        """When the physical window is smaller than the virtual resolution,
+        we must still show the *entire* logical scene, just scaled down.
+        This was the reported issue: content must not disappear or collapse.
+        """
         vr = VirtualResolution(width=1280, height=720)
         vp = compute_viewport(vr, 640, 360)
-        self.assertEqual(vp.scale, 1.0)  # clamped
-        self.assertEqual(vp.viewport_width, 1280)  # will be larger than phys -> bars
+        self.assertAlmostEqual(vp.scale, 0.5, places=5)
+        self.assertEqual(vp.viewport_width, 640)
+        self.assertEqual(vp.viewport_height, 360)
+        # The scaled logical surface exactly fits the physical window in this case
+        self.assertLessEqual(vp.viewport_width, 640)
+        self.assertLessEqual(vp.viewport_height, 360)
 
     def test_zero_physical_falls_back(self):
         vr = VirtualResolution(width=1280, height=720)
         vp = compute_viewport(vr, 0, 0)
         self.assertEqual(vp.physical_width, 1280)
         self.assertEqual(vp.physical_height, 720)
+
+    def test_full_logical_surface_always_fits(self):
+        """Core correctness property requested by the user.
+
+        No matter what physical window size (as long as positive),
+        the computed viewport must never be larger than the physical
+        window in either dimension. This guarantees the entire logical
+        (virtual) scene is always visible, just scaled + letterboxed.
+        """
+        vr = VirtualResolution(width=1280, height=720, integer_scaling=True)
+
+        # A range of realistic shrinking, matching, and expanding cases
+        physical_sizes = [
+            (100, 100), (320, 200), (640, 360), (800, 450), (1000, 600),
+            (1280, 720), (1280, 600), (1366, 768), (1440, 900),
+            (1600, 900), (1920, 1080), (2560, 1440), (3000, 2000),
+            (500, 2000), (2000, 500),  # extreme aspect ratios
+        ]
+
+        for pw, ph in physical_sizes:
+            with self.subTest(physical=f"{pw}x{ph}"):
+                vp = compute_viewport(vr, pw, ph)
+                self.assertLessEqual(
+                    vp.viewport_width, pw,
+                    f"viewport wider than physical for {pw}x{ph}"
+                )
+                self.assertLessEqual(
+                    vp.viewport_height, ph,
+                    f"viewport taller than physical for {pw}x{ph}"
+                )
+                self.assertGreater(vp.scale, 0)
+                self.assertGreaterEqual(vp.offset_x, 0)
+                self.assertGreaterEqual(vp.offset_y, 0)
+
+    def test_get_virtual_resolution_with_compute(self):
+        """Integration between data model and scaling logic.
+
+        This is how the presentation layer will actually use it at runtime.
+        """
+        from grimoire2d.models import EngineConfig
+
+        engine = EngineConfig.default()
+        # Replace the default with a non-standard virtual res
+        engine = engine.with_updates(
+            extensions={"virtual_resolution": VirtualResolution(640, 360)}
+        )
+
+        vr = get_virtual_resolution(engine)
+        self.assertEqual(vr.width, 640)
+        self.assertEqual(vr.height, 360)
+
+        vp = compute_viewport(vr, 1280, 720)
+        self.assertEqual(vp.scale, 2.0)  # integer upscaling from 640x360
+        self.assertEqual(vp.viewport_width, 1280)
+        self.assertEqual(vp.viewport_height, 720)
 
 
 if __name__ == "__main__":

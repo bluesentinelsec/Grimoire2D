@@ -45,13 +45,28 @@ def compute_viewport(
 ) -> Viewport:
     """Compute the letterboxed viewport and scale.
 
-    Respects virtual.integer_scaling:
-      - True  -> only integer scales (>= 1), crisp but may have larger bars.
-      - False -> fractional scale allowed to tightly fit one axis.
+    The game is always drawn using the *full* virtual (logical) coordinate
+    space (e.g. 0..1280, 0..720). This function computes how to map that
+    logical surface into the actual OS window:
 
-    The returned viewport is ready for use by the presentation layer
-    (glViewport + projection setup). The game content is always drawn
-    using the virtual coordinate space; the viewport + ortho do the rest.
+      - scale = the factor that makes the entire logical surface fit
+        inside the physical window while preserving aspect ratio.
+      - The content is centered with letterbox/pillarbox bars as needed.
+      - glViewport is set to the resulting centered sub-rectangle.
+
+    This means:
+    - When the window is larger than the virtual resolution, the logical
+      scene is scaled *up* (and letterboxed).
+    - When the window is smaller, the logical scene is scaled *down* so
+      the **full** content remains visible (just smaller on screen).
+    - integer_scaling=True (default) prefers crisp integer scales when
+      upscaling is possible. When the window is too small for 1:1, it
+      falls back to fractional downscaling so you never lose part of the
+      logical surface.
+
+    The returned Viewport tells the renderer the exact physical pixel
+    rectangle to use for the viewport + how the orthographic projection
+    should be configured.
     """
     if physical_width <= 0 or physical_height <= 0:
         physical_width = max(virtual.width, 1)
@@ -62,11 +77,15 @@ def compute_viewport(
 
     scale_x = physical_width / v_w
     scale_y = physical_height / v_h
+    fit_scale = min(scale_x, scale_y)
 
-    if virtual.integer_scaling:
-        scale = max(1.0, float(int(min(scale_x, scale_y))))
+    if virtual.integer_scaling and fit_scale >= 1.0:
+        # Prefer largest integer scale that still fits (crisp pixels)
+        scale = max(1.0, float(int(fit_scale)))
     else:
-        scale = min(scale_x, scale_y)
+        # Either fractional mode, or window is smaller than virtual:
+        # always use the fit scale so the *entire* logical surface is visible.
+        scale = fit_scale
 
     scaled_w = int(v_w * scale)
     scaled_h = int(v_h * scale)

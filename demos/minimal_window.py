@@ -20,9 +20,13 @@ Keys (window must have focus):
     3   - 1920x1080
     4   - 256x224 (classic 8:7-ish retro)
 
-Drag any window edge in windowed mode. Watch the yellow border and
-colored test rects stay the same size in *game units* while letterbox
-bars appear/disappear.
+Drag (or shrink) any window edge in windowed mode. The yellow border always
+represents the edges of the *full logical/virtual surface*. When the window
+is smaller than the virtual resolution the entire logical scene remains
+visible but is scaled down (fractionally if needed). Larger windows use
+integer upscaling for crisp pixels + letterboxing. All your drawing uses
+the fixed logical coordinate space; the scaling + centering happens at
+render time via viewport + projection.
 
 Change the BuildConfig to "release" to start in fullscreen_exclusive
 (virtual resolution + letterboxing still apply inside the display res).

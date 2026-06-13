@@ -29,10 +29,13 @@ class VirtualResolution(DataModel):
         The actual OS window can be any size; the renderer letterboxes
         and scales to fit while preserving aspect.
 
-    integer_scaling: when True (default), only whole integer scales are
-        used. This produces crisp pixels (no filtering) at the cost of
-        potentially larger letterbox bars. When False a fractional scale
-        is allowed to make the virtual area exactly fill one axis.
+    integer_scaling: when True (default), the renderer prefers whole
+        integer scales when the window is large enough to upscale the
+        logical surface. This produces crisp (unfiltered) pixels. When
+        the OS window is smaller than the virtual resolution, fractional
+        downscaling is used so the *entire* logical scene remains visible
+        (just smaller on screen). When False, a fractional scale is always
+        used to tightly fit the logical surface to one axis of the window.
 
     This model is deliberately small and focused. All extension of
     display behavior happens via new registered models or composition
