@@ -338,8 +338,7 @@ class Renderer:
 
         # Upload as GL texture (RGBA).
         # We use flip=False here and handle the vertical correction explicitly
-        # in the vertex shader (1.0 - v_texcoord.y). This makes the orientation
-        # robust and independent of the exact upload convention.
+        # in the vertex shader (1.0 - v_texcoord.y). This toggles only the v axis.
         data = pygame.image.tostring(surf, 'RGBA', False)
         texture = self.ctx.texture((tw, th), 4, data)
         texture.filter = (moderngl.LINEAR, moderngl.LINEAR)

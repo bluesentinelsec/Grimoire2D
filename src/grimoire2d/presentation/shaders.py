@@ -70,12 +70,10 @@ uniform vec2 u_scale;
 void main() {
     vec2 p = in_pos * u_scale + u_offset;
     gl_Position = u_projection * vec4(p, 0.0, 1.0);
-    // Flip both u and v. The combination of pygame surface origin,
-    // GL texture origin (bottom-left), our y-down virtual coords + ortho,
-    // and the unit quad layout results in a 180 degree rotation of the
-    // sampled image. Flipping both axes corrects it so text appears
-    // upright and left-to-right.
-    v_texcoord = vec2(1.0 - in_texcoord.x, 1.0 - in_texcoord.y);
+    // Toggle only the v axis (vertical). This is the standard correction
+    // for pygame surface (top-left origin) vs GL texture (bottom-left)
+    // when using y-down virtual coordinates like ours.
+    v_texcoord = vec2(in_texcoord.x, 1.0 - in_texcoord.y);
 }
 """
 
