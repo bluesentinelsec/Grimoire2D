@@ -186,6 +186,10 @@ class Renderer:
         self._game_clear = (0, 0, 0, 255)
         self._frame_textures: list[moderngl.Texture] = []
 
+        # Persistent text cache: (text, font_size) → texture.
+        # Avoids re-rasterising and re-uploading static labels every frame.
+        self._text_cache: dict[tuple[str, int], moderngl.Texture] = {}
+
     def set_virtual_resolution(self, virtual: VirtualResolution) -> None:
         """Update the game virtual resolution at runtime (data driven).
 
@@ -206,6 +210,11 @@ class Renderer:
         self._shape_program["u_projection"].value = self._projection
         self._sprite_program["u_projection"].value = self._projection
         self._pixel_buffer_program["u_projection"].value = self._projection
+        # Font sizes are derived from the virtual height, so cached textures
+        # rendered at the old scale are no longer valid.
+        for tex in self._text_cache.values():
+            tex.release()
+        self._text_cache.clear()
 
     def handle_physical_resize(self, physical_width: int, physical_height: int) -> None:
         """React to a window resize (or initial size, or fullscreen change).
@@ -607,15 +616,25 @@ class Renderer:
 
         self._shape_batch.flush()
 
-        font = self._get_font(font_size)
-        surf = font.render(text, True, (255, 255, 255)).convert_alpha()
-        tw, th = surf.get_size()
-        if tw <= 0 or th <= 0:
-            return
+        # Look up the cache first to skip rasterisation + upload for static labels.
+        cache_key = (text, font_size)
+        texture = self._text_cache.get(cache_key)
+        if texture is None:
+            font = self._get_font(font_size)
+            surf = font.render(text, True, (255, 255, 255)).convert_alpha()
+            tw, th = surf.get_size()
+            if tw <= 0 or th <= 0:
+                return
+            data = pygame.image.tostring(surf, "RGBA", False)
+            texture = self.ctx.texture((tw, th), 4, data)
+            texture.filter = (moderngl.LINEAR, moderngl.LINEAR)
+            # FIFO eviction at 512 entries to bound cache memory.
+            if len(self._text_cache) >= 512:
+                evict_key = next(iter(self._text_cache))
+                self._text_cache.pop(evict_key).release()
+            self._text_cache[cache_key] = texture
 
-        data = pygame.image.tostring(surf, "RGBA", False)
-        texture = self.ctx.texture((tw, th), 4, data)
-        texture.filter = (moderngl.LINEAR, moderngl.LINEAR)
+        tw, th = texture.width, texture.height
         texture.use(0)
 
         self.text_program["u_offset"].value = (float(x), float(y))
@@ -624,8 +643,6 @@ class Renderer:
         self.text_program["u_texture"].value = 0
 
         self._text_vao.render()
-
-        self._frame_textures.append(texture)
 
     def measure_text(self, text: str, *, font_size: int = 32, scale: float = 1.0) -> tuple[float, float]:
         """Return the (width, height) in virtual units the text would occupy.

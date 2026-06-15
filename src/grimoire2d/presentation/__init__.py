@@ -11,6 +11,7 @@ from .window import open_and_run, open_window_with_config
 from .renderer import Renderer
 from .batch import ShapeBatch, SpriteBatch, ShapeType
 from .pixel_buffer import PixelBuffer
+from .highdpi import enable_highdpi, get_drawable_size
 
 __all__ = [
     "open_and_run",
@@ -20,4 +21,6 @@ __all__ = [
     "SpriteBatch",
     "ShapeType",
     "PixelBuffer",
+    "enable_highdpi",
+    "get_drawable_size",
 ]
