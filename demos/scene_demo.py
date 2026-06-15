@@ -548,6 +548,10 @@ def main() -> None:
             elif event.type == pygame.VIDEORESIZE:
                 draw_w2 = round(event.w * pixel_ratio_x)
                 draw_h2 = round(event.h * pixel_ratio_y)
+                renderer.set_virtual_resolution(
+                    VirtualResolution(width=draw_w2, height=draw_h2,
+                                      integer_scaling=False)
+                )
                 renderer.handle_physical_resize(draw_w2, draw_h2)
                 lw, lh = float(draw_w2), float(draw_h2)
                 s = lh / 720.0
