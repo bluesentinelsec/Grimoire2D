@@ -446,11 +446,21 @@ def main() -> None:
     pygame.init()
     pygame.font.init()
 
+    pygame.display.gl_set_attribute(pygame.GL_CONTEXT_MAJOR_VERSION, 3)
+    pygame.display.gl_set_attribute(pygame.GL_CONTEXT_MINOR_VERSION, 3)
+    pygame.display.gl_set_attribute(pygame.GL_CONTEXT_PROFILE_MASK, pygame.GL_CONTEXT_PROFILE_CORE)
+    pygame.display.gl_set_attribute(pygame.GL_CONTEXT_FORWARD_COMPATIBLE_FLAG, True)
+
+    desk_sizes = pygame.display.get_desktop_sizes()
+    log_w, log_h = desk_sizes[0] if desk_sizes else (1280, 720)
+
     flags = pygame.OPENGL | pygame.DOUBLEBUF | pygame.RESIZABLE
-    pygame.display.set_mode((1280, 720), flags)
-    draw_w, draw_h = get_drawable_size()
-    pygame.display.set_mode((draw_w, draw_h), flags)
+    pygame.display.set_mode((log_w, log_h), flags)
     pygame.display.set_caption("Grimoire2D — Primitives Showcase")
+
+    draw_w, draw_h = get_drawable_size(log_w, log_h)
+    pixel_ratio_x = draw_w / log_w
+    pixel_ratio_y = draw_h / log_h
 
     ctx = moderngl.create_context()
     renderer = Renderer(ctx, VirtualResolution(width=draw_w, height=draw_h, integer_scaling=False))
@@ -483,7 +493,8 @@ def main() -> None:
                     current_scene = (current_scene - 1) % SCENE_COUNT
                     scene_frame = 0
             elif event.type == pygame.VIDEORESIZE:
-                draw_w2, draw_h2 = get_drawable_size()
+                draw_w2 = round(event.w * pixel_ratio_x)
+                draw_h2 = round(event.h * pixel_ratio_y)
                 renderer.handle_physical_resize(draw_w2, draw_h2)
 
         renderer.prepare_frame()
