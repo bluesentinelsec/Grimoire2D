@@ -9,5 +9,15 @@ real GL pipeline. Most callers only need the high-level open_and_run.
 
 from .window import open_and_run, open_window_with_config
 from .renderer import Renderer
+from .batch import ShapeBatch, SpriteBatch, ShapeType
+from .pixel_buffer import PixelBuffer
 
-__all__ = ["open_and_run", "open_window_with_config", "Renderer"]
+__all__ = [
+    "open_and_run",
+    "open_window_with_config",
+    "Renderer",
+    "ShapeBatch",
+    "SpriteBatch",
+    "ShapeType",
+    "PixelBuffer",
+]

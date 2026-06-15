@@ -25,9 +25,17 @@ import pygame
 
 from grimoire2d.logic.scaling import Viewport, compute_viewport
 from grimoire2d.models import VirtualResolution
+from grimoire2d.presentation.batch import ShapeBatch, ShapeType, SpriteBatch
+from grimoire2d.presentation.pixel_buffer import PixelBuffer
 from grimoire2d.presentation.shaders import (
     get_default_fragment_shader,
     get_default_vertex_shader,
+    get_pixel_buffer_fragment_shader,
+    get_pixel_buffer_vertex_shader,
+    get_shape_fragment_shader,
+    get_shape_vertex_shader,
+    get_sprite_fragment_shader,
+    get_sprite_vertex_shader,
     get_textured_fragment_shader,
     get_textured_vertex_shader,
 )
@@ -70,12 +78,18 @@ class Renderer:
     """
 
     def __init__(self, ctx: moderngl.Context, initial_virtual: VirtualResolution | None = None) -> None:
+        """Initialise the renderer with a live moderngl context.
+
+        Args:
+            ctx: The moderngl context created by the window bootstrap.
+            initial_virtual: Starting virtual resolution; defaults to 1280x720.
+        """
         self.ctx = ctx
         self._virt = initial_virtual or VirtualResolution()
         self._phys: tuple[int, int] = (self._virt.width, self._virt.height)
         self._viewport: Viewport = compute_viewport(self._virt, self._phys[0], self._phys[1])
 
-        # Compile the vendored shaders (strings live in the Python module)
+        # Legacy solid-colour program (kept for backward compatibility)
         vert_src = get_default_vertex_shader()
         frag_src = get_default_fragment_shader()
         self.program = self.ctx.program(
@@ -83,23 +97,15 @@ class Renderer:
             fragment_shader=frag_src,
         )
 
-        # Unit quad (two triangles) in 0..1 space. We scale/offset per draw.
-        # Using stdlib array (no numpy) so the only added dep is moderngl.
         quad_data = array.array(
             "f",
             [
-                0.0,
-                0.0,
-                1.0,
-                0.0,
-                1.0,
-                1.0,
-                0.0,
-                0.0,
-                1.0,
-                1.0,
-                0.0,
-                1.0,
+                0.0, 0.0,
+                1.0, 0.0,
+                1.0, 1.0,
+                0.0, 0.0,
+                1.0, 1.0,
+                0.0, 1.0,
             ],
         )
         self._quad_vbo = self.ctx.buffer(quad_data.tobytes())
@@ -109,7 +115,7 @@ class Renderer:
         textured_quad_data = array.array(
             "f",
             [
-                0.0, 0.0, 0.0, 0.0,  # pos (0,0 top-left of unit) -> tex (0,0 top of image)
+                0.0, 0.0, 0.0, 0.0,
                 1.0, 0.0, 1.0, 0.0,
                 1.0, 1.0, 1.0, 1.0,
                 0.0, 0.0, 0.0, 0.0,
@@ -119,7 +125,6 @@ class Renderer:
         )
         self._textured_quad_vbo = self.ctx.buffer(textured_quad_data.tobytes())
 
-        # Compile textured program (for text)
         tvert = get_textured_vertex_shader()
         tfrag = get_textured_fragment_shader()
         self.text_program = self.ctx.program(
@@ -137,10 +142,48 @@ class Renderer:
         self.program["u_projection"].value = self._projection
         self.text_program["u_projection"].value = self._projection
 
-        # Reasonable defaults for demo visuals
-        self._bar_color = (20, 20, 30, 255)  # dark bars outside letterbox
-        self._game_clear = (0, 0, 0, 255)    # will be overridden from VideoSettings
+        # SDF shape batch
+        self._shape_program = self.ctx.program(
+            vertex_shader=get_shape_vertex_shader(),
+            fragment_shader=get_shape_fragment_shader(),
+        )
+        self._shape_program["u_projection"].value = self._projection
+        self._shape_batch = ShapeBatch(self.ctx, self._shape_program)
 
+        # Sprite batch
+        self._sprite_program = self.ctx.program(
+            vertex_shader=get_sprite_vertex_shader(),
+            fragment_shader=get_sprite_fragment_shader(),
+        )
+        self._sprite_program["u_projection"].value = self._projection
+        self._sprite_batch = SpriteBatch(self.ctx, self._sprite_program)
+
+        # Pixel buffer program + static unit-quad
+        self._pixel_buffer_program = self.ctx.program(
+            vertex_shader=get_pixel_buffer_vertex_shader(),
+            fragment_shader=get_pixel_buffer_fragment_shader(),
+        )
+        self._pixel_buffer_program["u_projection"].value = self._projection
+
+        _pb_quad = array.array("f", [
+            0.0, 0.0, 0.0, 0.0,
+            1.0, 0.0, 1.0, 0.0,
+            1.0, 1.0, 1.0, 1.0,
+            0.0, 0.0, 0.0, 0.0,
+            1.0, 1.0, 1.0, 1.0,
+            0.0, 1.0, 0.0, 1.0,
+        ])
+        self._pb_vbo = self.ctx.buffer(_pb_quad.tobytes())
+        self._pb_vao = self.ctx.vertex_array(
+            self._pixel_buffer_program,
+            [(self._pb_vbo, "2f 2f", "in_pos", "in_texcoord")],
+        )
+
+        # Clip stack: list of (x, y, w, h) tuples in virtual coordinates
+        self._clip_stack: list[tuple[float, float, float, float]] = []
+
+        self._bar_color = (20, 20, 30, 255)
+        self._game_clear = (0, 0, 0, 255)
         self._frame_textures: list[moderngl.Texture] = []
 
     def set_virtual_resolution(self, virtual: VirtualResolution) -> None:
@@ -160,6 +203,9 @@ class Renderer:
         )
         self.program["u_projection"].value = self._projection
         self.text_program["u_projection"].value = self._projection
+        self._shape_program["u_projection"].value = self._projection
+        self._sprite_program["u_projection"].value = self._projection
+        self._pixel_buffer_program["u_projection"].value = self._projection
 
     def handle_physical_resize(self, physical_width: int, physical_height: int) -> None:
         """React to a window resize (or initial size, or fullscreen change).
@@ -186,6 +232,10 @@ class Renderer:
         vp = self._viewport
         phys_w, phys_h = self._phys
 
+        # Disable any scissor left over from the previous frame
+        self.ctx.scissor = None
+        self._clip_stack.clear()
+
         # Full window clear for the bars/pillarbox
         self.ctx.viewport = (0, 0, phys_w, phys_h)
         r, g, b, a = (c / 255.0 for c in self._bar_color)
@@ -201,9 +251,6 @@ class Renderer:
         r, g, b, a = (c / 255.0 for c in self._game_clear)
         self.ctx.clear(r, g, b, a)
 
-        # Enable blending so text (which uses alpha from the font texture for
-        # glyph shape + antialiasing) composites correctly over the background.
-        # Solid rects/border use alpha=1 so they are unaffected.
         self.ctx.enable(moderngl.BLEND)
         self.ctx.blend_func = (moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA)
 
@@ -215,15 +262,257 @@ class Renderer:
         h: float,
         color: tuple[float, float, float, float],
     ) -> None:
-        """Draw a solid rectangle in *virtual* coordinates.
+        """Draw a solid rectangle in *virtual* coordinates via the SDF batch.
 
-        (x,y) is the top-left corner in the current virtual resolution space.
-        This is the proof that everything is resolution-independent.
+        (x, y) is the top-left corner in the current virtual resolution space.
+        This is resolution-independent: the same call renders correctly at any
+        physical window size or virtual resolution.
         """
-        self.program["u_offset"].value = (float(x), float(y))
-        self.program["u_scale"].value = (float(w), float(h))
-        self.program["u_color"].value = color
-        self._quad_vao.render()
+        self._shape_batch.add_quad(x, y, w, h, color, shape_type=ShapeType.RECT)
+
+    def draw_rect_rounded(
+        self,
+        x: float,
+        y: float,
+        w: float,
+        h: float,
+        radius: float,
+        color: tuple[float, float, float, float],
+    ) -> None:
+        """Draw a filled rectangle with rounded corners.
+
+        Args:
+            x: Left edge in virtual coordinates.
+            y: Top edge in virtual coordinates.
+            w: Width in virtual pixels.
+            h: Height in virtual pixels.
+            radius: Corner radius in virtual pixels.
+            color: RGBA (0..1) fill colour.
+        """
+        self._shape_batch.add_quad(
+            x, y, w, h, color,
+            shape_type=ShapeType.ROUNDED_RECT,
+            corner_r=radius,
+        )
+
+    def draw_rect_gradient(
+        self,
+        x: float,
+        y: float,
+        w: float,
+        h: float,
+        color_top: tuple[float, float, float, float],
+        color_bottom: tuple[float, float, float, float],
+    ) -> None:
+        """Draw a filled rectangle with a vertical linear gradient.
+
+        Args:
+            x: Left edge in virtual coordinates.
+            y: Top edge in virtual coordinates.
+            w: Width in virtual pixels.
+            h: Height in virtual pixels.
+            color_top: RGBA (0..1) colour at the top edge.
+            color_bottom: RGBA (0..1) colour at the bottom edge.
+        """
+        self._shape_batch.add_quad(
+            x, y, w, h, color_top,
+            shape_type=ShapeType.RECT,
+            color_b=color_bottom,
+        )
+
+    def draw_rect_border(
+        self,
+        x: float,
+        y: float,
+        w: float,
+        h: float,
+        thickness: float,
+        color: tuple[float, float, float, float],
+    ) -> None:
+        """Draw an axis-aligned rectangle outline (stroke only).
+
+        Args:
+            x: Left edge in virtual coordinates.
+            y: Top edge in virtual coordinates.
+            w: Width in virtual pixels.
+            h: Height in virtual pixels.
+            thickness: Stroke width in virtual pixels.
+            color: RGBA (0..1) stroke colour.
+        """
+        self._shape_batch.add_quad(
+            x, y, w, h, color,
+            shape_type=ShapeType.RECT_BORDER,
+            border_t=thickness,
+        )
+
+    def draw_rect_rounded_border(
+        self,
+        x: float,
+        y: float,
+        w: float,
+        h: float,
+        radius: float,
+        thickness: float,
+        color: tuple[float, float, float, float],
+    ) -> None:
+        """Draw a rounded rectangle outline (stroke only).
+
+        Args:
+            x: Left edge in virtual coordinates.
+            y: Top edge in virtual coordinates.
+            w: Width in virtual pixels.
+            h: Height in virtual pixels.
+            radius: Corner radius in virtual pixels.
+            thickness: Stroke width in virtual pixels.
+            color: RGBA (0..1) stroke colour.
+        """
+        self._shape_batch.add_quad(
+            x, y, w, h, color,
+            shape_type=ShapeType.ROUNDED_RECT_BORDER,
+            corner_r=radius,
+            border_t=thickness,
+        )
+
+    def draw_circle(
+        self,
+        cx: float,
+        cy: float,
+        r: float,
+        color: tuple[float, float, float, float],
+    ) -> None:
+        """Draw a filled circle.
+
+        Args:
+            cx: Centre x in virtual coordinates.
+            cy: Centre y in virtual coordinates.
+            r: Radius in virtual pixels.
+            color: RGBA (0..1) fill colour.
+        """
+        self._shape_batch.add_quad(
+            cx - r, cy - r, r * 2.0, r * 2.0, color,
+            shape_type=ShapeType.CIRCLE,
+        )
+
+    def draw_ring(
+        self,
+        cx: float,
+        cy: float,
+        outer_r: float,
+        inner_r: float,
+        color: tuple[float, float, float, float],
+    ) -> None:
+        """Draw a ring / annulus.
+
+        Args:
+            cx: Centre x in virtual coordinates.
+            cy: Centre y in virtual coordinates.
+            outer_r: Outer radius in virtual pixels.
+            inner_r: Inner radius (hole) in virtual pixels.
+            color: RGBA (0..1) fill colour.
+        """
+        self._shape_batch.add_quad(
+            cx - outer_r, cy - outer_r, outer_r * 2.0, outer_r * 2.0, color,
+            shape_type=ShapeType.RING,
+            inner_r=inner_r,
+        )
+
+    def draw_line(
+        self,
+        x0: float,
+        y0: float,
+        x1: float,
+        y1: float,
+        thickness: float,
+        color: tuple[float, float, float, float],
+    ) -> None:
+        """Draw an arbitrarily-angled line segment.
+
+        Args:
+            x0: Start x in virtual coordinates.
+            y0: Start y in virtual coordinates.
+            x1: End x in virtual coordinates.
+            y1: End y in virtual coordinates.
+            thickness: Line width in virtual pixels.
+            color: RGBA (0..1) colour.
+        """
+        self._shape_batch.add_line(x0, y0, x1, y1, thickness, color)
+
+    def push_clip(self, x: float, y: float, w: float, h: float) -> None:
+        """Enable a scissor rectangle, clipping all subsequent draws.
+
+        Flushes both batches before changing GL scissor state.  Virtual
+        coordinates are converted to physical pixels using the current
+        viewport transform.
+
+        Args:
+            x: Left edge of clip rect in virtual coordinates.
+            y: Top edge of clip rect in virtual coordinates.
+            w: Width of clip rect in virtual pixels.
+            h: Height of clip rect in virtual pixels.
+        """
+        self._shape_batch.flush()
+        self._sprite_batch.flush()
+        self._clip_stack.append((x, y, w, h))
+        self._apply_scissor(x, y, w, h)
+
+    def pop_clip(self) -> None:
+        """Restore the previous scissor rectangle (or disable scissor).
+
+        Flushes both batches before changing GL scissor state.
+        """
+        self._shape_batch.flush()
+        self._sprite_batch.flush()
+        if self._clip_stack:
+            self._clip_stack.pop()
+        if not self._clip_stack:
+            self.ctx.scissor = None
+        else:
+            x, y, w, h = self._clip_stack[-1]
+            self._apply_scissor(x, y, w, h)
+
+    def _apply_scissor(self, x: float, y: float, w: float, h: float) -> None:
+        """Convert virtual-space clip rect to physical pixels and set GL scissor.
+
+        Args:
+            x: Left edge in virtual coordinates.
+            y: Top edge in virtual coordinates.
+            w: Clip width in virtual pixels.
+            h: Clip height in virtual pixels.
+        """
+        vp = self._viewport
+        scale = vp.viewport_width / self._virt.width
+        sx = int(vp.viewport_x + x * scale)
+        sy = int(vp.viewport_y + (self._virt.height - y - h) * scale)
+        sw = int(w * scale)
+        sh = int(h * scale)
+        self.ctx.scissor = (sx, sy, sw, sh)
+
+    def draw_pixel_buffer(
+        self,
+        pixel_buffer: PixelBuffer,
+        x: float,
+        y: float,
+        w: float,
+        h: float,
+    ) -> None:
+        """Render a PixelBuffer texture as a nearest-neighbour scaled quad.
+
+        Call ``pixel_buffer.upload()`` before this method each frame.
+
+        Args:
+            pixel_buffer: The PixelBuffer whose texture to render.
+            x: Left edge destination in virtual coordinates.
+            y: Top edge destination in virtual coordinates.
+            w: Destination width in virtual pixels.
+            h: Destination height in virtual pixels.
+        """
+        self._shape_batch.flush()
+        self._sprite_batch.flush()
+        pixel_buffer.texture.use(0)
+        self._pixel_buffer_program["u_offset"].value = (float(x), float(y))
+        self._pixel_buffer_program["u_scale"].value = (float(w), float(h))
+        self._pixel_buffer_program["u_texture"].value = 0
+        self._pb_vao.render()
 
     def draw_virtual_border(self, thickness: float = 4.0) -> None:
         """Draw a thin border exactly at the virtual resolution edges.
@@ -233,15 +522,11 @@ class Renderer:
         v_w = float(self._virt.width)
         v_h = float(self._virt.height)
         t = float(thickness)
-        c = (0.9, 0.9, 0.2, 1.0)  # yellowish border
+        c = (0.9, 0.9, 0.2, 1.0)
 
-        # Top
         self.draw_rect(0, 0, v_w, t, c)
-        # Bottom
         self.draw_rect(0, v_h - t, v_w, t, c)
-        # Left
         self.draw_rect(0, 0, t, v_h, c)
-        # Right
         self.draw_rect(v_w - t, 0, t, v_h, c)
 
     def draw_test_pattern(self) -> None:
@@ -251,19 +536,14 @@ class Renderer:
         resolution no matter how the user resizes the OS window or
         changes the virtual resolution at runtime.
         """
-        # Near top-left
         self.draw_rect(40, 40, 180, 120, (0.2, 0.6, 1.0, 1.0))
-        # Center-ish
         cx = (self._virt.width - 220) / 2
         cy = (self._virt.height - 160) / 2
         self.draw_rect(cx, cy, 220, 160, (1.0, 0.3, 0.3, 1.0))
-        # Near bottom-right
         self.draw_rect(
             self._virt.width - 260, self._virt.height - 140, 200, 100, (0.3, 0.9, 0.4, 1.0)
         )
 
-        # Text primitive demo (proves runtime string, color, alpha, scale + logical coords)
-        # Positioned to the right of the top-left blue test rect so it doesn't overlap.
         self.draw_text(
             f"Virtual: {self._virt.width}x{self._virt.height}  (press 1-4 to change)",
             240,
@@ -276,7 +556,7 @@ class Renderer:
             "Text is a primitive. Full logical surface scales + letterboxes correctly.",
             240,
             55,
-            color=(0.7, 0.9, 1.0, 0.9),  # slight transparency
+            color=(0.7, 0.9, 1.0, 0.9),
             scale=0.75,
             font_size=18,
         )
@@ -286,14 +566,12 @@ class Renderer:
     def _get_font(self, size: int):
         """Lazy cache for pygame fonts (default system font for the primitive).
 
-        Font size is the base render size; the `scale` parameter in draw_text
+        Font size is the base render size; the ``scale`` parameter in draw_text
         then multiplies the resulting quad size in virtual coordinates.
         """
         if not hasattr(self, "_fonts"):
             self._fonts = {}
         if size not in self._fonts:
-            # Font(None, size) gives a reasonable platform default.
-            # Later we can support explicit font paths (via VFS for games).
             self._fonts[size] = pygame.font.Font(None, size)
         return self._fonts[size]
 
@@ -313,8 +591,8 @@ class Renderer:
         (with alpha for transparency), and scale can all be changed every frame.
 
         - (x, y) is the top-left of the text in the current virtual resolution.
-        - `scale` multiplies the rendered size (in virtual units).
-        - `font_size` is the base pygame font size used for rasterization.
+        - ``scale`` multiplies the rendered size (in virtual units).
+        - ``font_size`` is the base pygame font size used for rasterization.
         - Color tints the (white) rendered text and applies alpha.
 
         All drawing happens through the current logical viewport/projection,
@@ -327,20 +605,19 @@ class Renderer:
         if not text:
             return
 
+        self._shape_batch.flush()
+
         font = self._get_font(font_size)
-        # Render white; shader does the runtime tint (color + alpha)
         surf = font.render(text, True, (255, 255, 255)).convert_alpha()
         tw, th = surf.get_size()
         if tw <= 0 or th <= 0:
             return
 
-        data = pygame.image.tostring(surf, 'RGBA', False)
+        data = pygame.image.tostring(surf, "RGBA", False)
         texture = self.ctx.texture((tw, th), 4, data)
         texture.filter = (moderngl.LINEAR, moderngl.LINEAR)
         texture.use(0)
 
-        # Use the same offset/scale pattern as draw_rect, but on the textured program.
-        # The quad size in virtual space = (font pixels * scale)
         self.text_program["u_offset"].value = (float(x), float(y))
         self.text_program["u_scale"].value = (float(tw) * scale, float(th) * scale)
         self.text_program["u_color"].value = color
@@ -348,9 +625,6 @@ class Renderer:
 
         self._text_vao.render()
 
-        # Keep the texture alive until the end of the frame.
-        # Releasing immediately after render() can cause the GPU to sample
-        # a deleted texture on some drivers/configs (result: invisible text).
         self._frame_textures.append(texture)
 
     def measure_text(self, text: str, *, font_size: int = 32, scale: float = 1.0) -> tuple[float, float]:
@@ -382,16 +656,14 @@ class Renderer:
         self.draw_text(text, x, y, color=color, scale=scale, font_size=font_size)
 
     def present(self) -> None:
-        """Swap / finish the frame.
+        """Flush pending batches and swap / finish the frame.
 
         With pygame + moderngl the pygame.display.flip() after this
         (or ctx.finish()) is usually sufficient.
         """
-        # Release any textures used for text (or sprites) this frame.
-        # We kept them alive so the draw commands could actually sample them.
+        self._shape_batch.flush()
+        self._sprite_batch.flush()
+
         for tex in self._frame_textures:
             tex.release()
         self._frame_textures.clear()
-
-        # moderngl does not do the swap; the caller (window) does flip.
-        pass
