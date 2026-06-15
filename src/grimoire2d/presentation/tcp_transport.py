@@ -35,6 +35,7 @@ from grimoire2d.logic.network_protocol import (
 # TcpTransport
 # ---------------------------------------------------------------------------
 
+
 class TcpTransport:
     """Non-blocking TCP transport that implements the InputSource protocol.
 
@@ -44,10 +45,10 @@ class TcpTransport:
     """
 
     def __init__(self, player_id: str, sock: socket.socket) -> None:
-        self._player_id  = player_id
-        self._sock       = sock
+        self._player_id = player_id
+        self._sock = sock
         self._sock.setblocking(False)
-        self._recv_buf   = bytearray()
+        self._recv_buf = bytearray()
 
     @property
     def player_id(self) -> str:
@@ -105,6 +106,7 @@ class TcpTransport:
 # InMemoryTransport
 # ---------------------------------------------------------------------------
 
+
 class InMemoryTransport:
     """In-process test double: two queue.Queue objects replace the socket.
 
@@ -119,12 +121,12 @@ class InMemoryTransport:
     def __init__(
         self,
         player_id: str,
-        inbox:  queue.Queue,
+        inbox: queue.Queue,
         outbox: queue.Queue,
     ) -> None:
         self._player_id = player_id
-        self._inbox     = inbox
-        self._outbox    = outbox
+        self._inbox = inbox
+        self._outbox = outbox
 
     @classmethod
     def make_pair(
