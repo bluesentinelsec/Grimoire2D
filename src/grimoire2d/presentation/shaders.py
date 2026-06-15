@@ -139,6 +139,7 @@ void main() {
 """
 
 SHAPE_FRAGMENT_SHADER = """#version 330 core
+#define PI 3.14159265359
 
 in vec2 v_local_p;
 in vec2 v_half_size;
@@ -185,6 +186,52 @@ void main() {
     } else if (shape_type == 4) {
         float filled = sdf_rect(v_local_p, v_half_size);
         d = abs(filled) - border_t * 0.5;
+    } else if (shape_type == 5) {
+        float filled = sdf_rounded_rect(v_local_p, v_half_size, corner_r);
+        d = abs(filled) - border_t * 0.5;
+    } else if (shape_type == 6) {
+        // ELLIPSE
+        vec2 n = v_local_p / v_half_size;
+        float d_norm = length(n) - 1.0;
+        d = d_norm * min(v_half_size.x, v_half_size.y);
+    } else if (shape_type == 7) {
+        // ARC: corner_r=arc_thickness, border_t=angle_start, inner_r=angle_span
+        float arc_t = corner_r;
+        float a_start = border_t;
+        float a_span = inner_r;
+        float outer_r = min(v_half_size.x, v_half_size.y);
+        float inner_rr = max(outer_r - arc_t, 0.0);
+        d = sdf_ring(v_local_p, outer_r, inner_rr);
+        if (length(v_local_p) > 0.001) {
+            float a = atan(v_local_p.y, v_local_p.x);
+            float da = mod(a - a_start + 6.28318 * 2.0, 6.28318);
+            if (da > a_span) d = 1.0;
+        }
+    } else if (shape_type == 8) {
+        // PIE: corner_r=angle_start, border_t=angle_span
+        float a_start = corner_r;
+        float a_span = border_t;
+        d = sdf_circle(v_local_p, min(v_half_size.x, v_half_size.y));
+        if (length(v_local_p) > 0.001) {
+            float a = atan(v_local_p.y, v_local_p.x);
+            float da = mod(a - a_start + 6.28318 * 2.0, 6.28318);
+            if (da > a_span) d = 1.0;
+        }
+    } else if (shape_type == 9) {
+        // CAPSULE
+        float r = min(v_half_size.x, v_half_size.y);
+        vec2 inner = v_half_size - r;
+        vec2 q = abs(v_local_p) - inner;
+        d = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
+    } else if (shape_type == 10) {
+        // GLOW: corner_r=glow_radius, border_t=shape_radius
+        float glow_r = corner_r;
+        float shape_r = border_t;
+        float shape_d = sdf_rounded_rect(v_local_p, v_half_size, shape_r);
+        float alpha = smoothstep(glow_r, 0.0, shape_d) * v_color.a;
+        if (alpha < 0.004) discard;
+        frag_color = vec4(v_color.rgb, alpha);
+        return;
     } else {
         float filled = sdf_rounded_rect(v_local_p, v_half_size, corner_r);
         d = abs(filled) - border_t * 0.5;
@@ -302,3 +349,38 @@ def get_pixel_buffer_vertex_shader() -> str:
 def get_pixel_buffer_fragment_shader() -> str:
     """Return the pixel-buffer quad fragment shader source."""
     return PIXEL_BUFFER_FRAGMENT_SHADER
+
+
+# Polygon batch shader for flat-coloured / gradient triangles.
+# Vertex layout: 6 floats per vertex — '2f 4f'
+#   in_pos   (vec2): virtual-space position
+#   in_color (vec4): RGBA 0..1 (per-vertex for gradients)
+POLYGON_VERTEX_SHADER = """#version 330 core
+in vec2 in_pos;
+in vec4 in_color;
+out vec4 v_color;
+uniform mat4 u_projection;
+void main() {
+    gl_Position = u_projection * vec4(in_pos, 0.0, 1.0);
+    v_color = in_color;
+}
+"""
+
+POLYGON_FRAGMENT_SHADER = """#version 330 core
+in vec4 v_color;
+out vec4 frag_color;
+void main() {
+    if (v_color.a < 0.004) discard;
+    frag_color = v_color;
+}
+"""
+
+
+def get_polygon_vertex_shader() -> str:
+    """Return the polygon batch vertex shader source."""
+    return POLYGON_VERTEX_SHADER
+
+
+def get_polygon_fragment_shader() -> str:
+    """Return the polygon batch fragment shader source."""
+    return POLYGON_FRAGMENT_SHADER

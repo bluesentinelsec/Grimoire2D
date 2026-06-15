@@ -30,6 +30,11 @@ class ShapeType:
     RING = 3
     RECT_BORDER = 4
     ROUNDED_RECT_BORDER = 5
+    ELLIPSE = 6
+    ARC = 7
+    PIE = 8
+    CAPSULE = 9
+    GLOW = 10
 
 
 class ShapeBatch:
@@ -117,12 +122,15 @@ class ShapeBatch:
         border_t: float = 0.0,
         inner_r: float = 0.0,
         color_b: tuple[float, float, float, float] | None = None,
+        gradient_mode: int = 0,
     ) -> None:
         """Enqueue an axis-aligned quad into the batch.
 
-        (x, y) is the top-left corner; (w, h) is the size.  Top vertices
-        receive ``color``; bottom vertices receive ``color_b`` (or ``color``
-        if omitted) for simple linear gradients.
+        (x, y) is the top-left corner; (w, h) is the size.  Colour assignment
+        depends on ``gradient_mode``:
+
+        - ``0`` (vertical, default): TL=color, TR=color, BL=color_b, BR=color_b
+        - ``1`` (horizontal): TL=color, TR=color_b, BL=color, BR=color_b
 
         An automatic ``flush()`` is issued when the buffer is full.
 
@@ -131,12 +139,13 @@ class ShapeBatch:
             y: Top edge in virtual coordinates.
             w: Width in virtual pixels.
             h: Height in virtual pixels.
-            color: RGBA (0..1) top-edge colour.
+            color: RGBA (0..1) primary colour (top or left depending on mode).
             shape_type: One of the ``ShapeType`` constants.
             corner_r: Corner radius for rounded shapes.
             border_t: Stroke thickness for border shapes.
             inner_r: Inner radius for ring shapes.
-            color_b: Bottom-edge colour for gradients; defaults to *color*.
+            color_b: Secondary colour for gradients; defaults to *color*.
+            gradient_mode: 0=vertical gradient, 1=horizontal gradient.
         """
         if self._quad_count >= self._capacity:
             self.flush()
@@ -164,13 +173,21 @@ class ShapeBatch:
         br_lx, br_ly = br_x - cx, br_y - cy
         bl_lx, bl_ly = bl_x - cx, bl_y - cy
 
+        # Assign per-vertex colours based on gradient_mode
+        if gradient_mode == 1:
+            # Horizontal: left=color, right=cb
+            c_tl, c_tr, c_br, c_bl = color, cb, cb, color
+        else:
+            # Vertical (default): top=color, bottom=cb
+            c_tl, c_tr, c_br, c_bl = color, color, cb, cb
+
         base = self._quad_count * self._stride
-        self._write_vertex(base + 0 * 14,  tl_x, tl_y, tl_lx, tl_ly, hw, hh, color, params)
-        self._write_vertex(base + 1 * 14,  tr_x, tr_y, tr_lx, tr_ly, hw, hh, color, params)
-        self._write_vertex(base + 2 * 14,  br_x, br_y, br_lx, br_ly, hw, hh, cb,    params)
-        self._write_vertex(base + 3 * 14,  tl_x, tl_y, tl_lx, tl_ly, hw, hh, color, params)
-        self._write_vertex(base + 4 * 14,  br_x, br_y, br_lx, br_ly, hw, hh, cb,    params)
-        self._write_vertex(base + 5 * 14,  bl_x, bl_y, bl_lx, bl_ly, hw, hh, cb,    params)
+        self._write_vertex(base + 0 * 14,  tl_x, tl_y, tl_lx, tl_ly, hw, hh, c_tl, params)
+        self._write_vertex(base + 1 * 14,  tr_x, tr_y, tr_lx, tr_ly, hw, hh, c_tr, params)
+        self._write_vertex(base + 2 * 14,  br_x, br_y, br_lx, br_ly, hw, hh, c_br, params)
+        self._write_vertex(base + 3 * 14,  tl_x, tl_y, tl_lx, tl_ly, hw, hh, c_tl, params)
+        self._write_vertex(base + 4 * 14,  br_x, br_y, br_lx, br_ly, hw, hh, c_br, params)
+        self._write_vertex(base + 5 * 14,  bl_x, bl_y, bl_lx, bl_ly, hw, hh, c_bl, params)
 
         self._quad_count += 1
 
@@ -268,6 +285,111 @@ class ShapeBatch:
         self._vbo.write(self._data.tobytes()[:n_bytes])
         self._vao.render(vertices=n_verts)
         self._quad_count = 0
+
+    def release(self) -> None:
+        """Release GPU resources (VAO then VBO)."""
+        self._vao.release()
+        self._vbo.release()
+
+
+class PolygonBatch:
+    """Pre-allocated vertex buffer for flat-coloured and gradient triangles.
+
+    Used for convex polygon fan-triangulation, four-corner gradient quads,
+    radial circle gradients, and arbitrary triangle meshes.  Vertex format:
+
+        '2f 4f'
+        in_pos (vec2), in_color (vec4)
+
+    6 floats × 3 verts × 4 bytes = 72 bytes per triangle.
+    """
+
+    _FLOATS_PER_VERTEX: int = 6
+    _VERTS_PER_TRI: int = 3
+
+    def __init__(self, ctx: moderngl.Context, program: moderngl.Program, capacity: int = 4096) -> None:
+        """Initialise with a pre-allocated buffer for *capacity* triangles.
+
+        Args:
+            ctx: Active moderngl context.
+            program: Compiled POLYGON_VERTEX / POLYGON_FRAGMENT program.
+            capacity: Maximum number of triangles before an automatic flush.
+        """
+        self._capacity = capacity
+        self._tri_count = 0
+        self._stride = self._FLOATS_PER_VERTEX * self._VERTS_PER_TRI
+        self._data: array.array = array.array("f", [0.0] * (capacity * self._stride))
+        reserve = capacity * self._stride * 4
+        self._vbo = ctx.buffer(reserve=reserve, dynamic=True)
+        self._vao = ctx.vertex_array(program, [(self._vbo, "2f 4f", "in_pos", "in_color")])
+
+    def _write_vertex(self, base: int, px: float, py: float, r: float, g: float, b: float, a: float) -> None:
+        """Write one vertex (6 floats) starting at *base* in ``_data``."""
+        self._data[base:base + 6] = array.array("f", [px, py, r, g, b, a])
+
+    def add_triangle(
+        self,
+        x0: float, y0: float,
+        x1: float, y1: float,
+        x2: float, y2: float,
+        c0: tuple[float, float, float, float],
+        c1: tuple[float, float, float, float],
+        c2: tuple[float, float, float, float],
+    ) -> None:
+        """Enqueue a single triangle with per-vertex colours.
+
+        Args:
+            x0, y0: First vertex position in virtual coordinates.
+            x1, y1: Second vertex position in virtual coordinates.
+            x2, y2: Third vertex position in virtual coordinates.
+            c0: RGBA (0..1) colour for the first vertex.
+            c1: RGBA (0..1) colour for the second vertex.
+            c2: RGBA (0..1) colour for the third vertex.
+        """
+        if self._tri_count >= self._capacity:
+            self.flush()
+        base = self._tri_count * self._stride
+        self._write_vertex(base + 0,  x0, y0, *c0)
+        self._write_vertex(base + 6,  x1, y1, *c1)
+        self._write_vertex(base + 12, x2, y2, *c2)
+        self._tri_count += 1
+
+    def add_fan(
+        self,
+        cx: float,
+        cy: float,
+        points: list[tuple[float, float]],
+        center_color: tuple[float, float, float, float],
+        edge_color: tuple[float, float, float, float],
+    ) -> None:
+        """Fan of triangles from (cx, cy) to adjacent edge point pairs.
+
+        Args:
+            cx: Fan centre x in virtual coordinates.
+            cy: Fan centre y in virtual coordinates.
+            points: Ordered list of edge points (x, y).
+            center_color: RGBA (0..1) colour at the fan centre.
+            edge_color: RGBA (0..1) colour at the edge points.
+        """
+        n = len(points)
+        for i in range(n):
+            p0 = points[i]
+            p1 = points[(i + 1) % n]
+            self.add_triangle(cx, cy, p0[0], p0[1], p1[0], p1[1],
+                              center_color, edge_color, edge_color)
+
+    def flush(self) -> None:
+        """Upload accumulated geometry to the GPU and render.
+
+        Resets the triangle counter after drawing.  Safe to call when empty.
+        """
+        if self._tri_count == 0:
+            return
+        n_verts = self._tri_count * self._VERTS_PER_TRI
+        n_bytes = n_verts * self._FLOATS_PER_VERTEX * 4
+        self._vbo.write(self._data.tobytes()[:n_bytes])
+        self._vao.render(vertices=n_verts)
+        self._tri_count = 0
 
     def release(self) -> None:
         """Release GPU resources (VAO then VBO)."""

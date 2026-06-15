@@ -25,13 +25,15 @@ import pygame
 
 from grimoire2d.logic.scaling import Viewport, compute_viewport
 from grimoire2d.models import VirtualResolution
-from grimoire2d.presentation.batch import ShapeBatch, ShapeType, SpriteBatch
+from grimoire2d.presentation.batch import PolygonBatch, ShapeBatch, ShapeType, SpriteBatch
 from grimoire2d.presentation.pixel_buffer import PixelBuffer
 from grimoire2d.presentation.shaders import (
     get_default_fragment_shader,
     get_default_vertex_shader,
     get_pixel_buffer_fragment_shader,
     get_pixel_buffer_vertex_shader,
+    get_polygon_fragment_shader,
+    get_polygon_vertex_shader,
     get_shape_fragment_shader,
     get_shape_vertex_shader,
     get_sprite_fragment_shader,
@@ -158,6 +160,14 @@ class Renderer:
         self._sprite_program["u_projection"].value = self._projection
         self._sprite_batch = SpriteBatch(self.ctx, self._sprite_program)
 
+        # Polygon batch (triangles, convex polygons, corner gradients, radial gradients)
+        self._polygon_program = self.ctx.program(
+            vertex_shader=get_polygon_vertex_shader(),
+            fragment_shader=get_polygon_fragment_shader(),
+        )
+        self._polygon_program["u_projection"].value = self._projection
+        self._polygon_batch = PolygonBatch(self.ctx, self._polygon_program)
+
         # Pixel buffer program + static unit-quad
         self._pixel_buffer_program = self.ctx.program(
             vertex_shader=get_pixel_buffer_vertex_shader(),
@@ -209,6 +219,7 @@ class Renderer:
         self.text_program["u_projection"].value = self._projection
         self._shape_program["u_projection"].value = self._projection
         self._sprite_program["u_projection"].value = self._projection
+        self._polygon_program["u_projection"].value = self._projection
         self._pixel_buffer_program["u_projection"].value = self._projection
         # Font sizes are derived from the virtual height, so cached textures
         # rendered at the old scale are no longer valid.
@@ -460,6 +471,7 @@ class Renderer:
             h: Height of clip rect in virtual pixels.
         """
         self._shape_batch.flush()
+        self._polygon_batch.flush()
         self._sprite_batch.flush()
         self._clip_stack.append((x, y, w, h))
         self._apply_scissor(x, y, w, h)
@@ -467,9 +479,10 @@ class Renderer:
     def pop_clip(self) -> None:
         """Restore the previous scissor rectangle (or disable scissor).
 
-        Flushes both batches before changing GL scissor state.
+        Flushes all batches before changing GL scissor state.
         """
         self._shape_batch.flush()
+        self._polygon_batch.flush()
         self._sprite_batch.flush()
         if self._clip_stack:
             self._clip_stack.pop()
@@ -672,6 +685,478 @@ class Renderer:
         y = cy - h / 2.0
         self.draw_text(text, x, y, color=color, scale=scale, font_size=font_size)
 
+    # --- SDF shapes (new types) ---
+
+    def draw_ellipse(
+        self,
+        cx: float,
+        cy: float,
+        rx: float,
+        ry: float,
+        color: tuple[float, float, float, float],
+    ) -> None:
+        """Draw a filled ellipse.
+
+        Args:
+            cx: Centre x in virtual coordinates.
+            cy: Centre y in virtual coordinates.
+            rx: Horizontal radius in virtual pixels.
+            ry: Vertical radius in virtual pixels.
+            color: RGBA (0..1) fill colour.
+        """
+        self._shape_batch.add_quad(cx - rx, cy - ry, rx * 2.0, ry * 2.0, color, shape_type=ShapeType.ELLIPSE)
+
+    def draw_arc(
+        self,
+        cx: float,
+        cy: float,
+        r: float,
+        angle_start: float,
+        angle_end: float,
+        thickness: float,
+        color: tuple[float, float, float, float],
+    ) -> None:
+        """Draw a circular arc (ring sector).
+
+        Args:
+            cx: Centre x in virtual coordinates.
+            cy: Centre y in virtual coordinates.
+            r: Radius in virtual pixels.
+            angle_start: Start angle in radians.
+            angle_end: End angle in radians.
+            thickness: Ring thickness in virtual pixels.
+            color: RGBA (0..1) colour.
+        """
+        import math
+        span = (angle_end - angle_start) % (2.0 * math.pi)
+        if span < 1e-6:
+            span = 2.0 * math.pi
+        self._shape_batch.add_quad(
+            cx - r, cy - r, r * 2.0, r * 2.0, color,
+            shape_type=ShapeType.ARC,
+            corner_r=thickness,
+            border_t=angle_start,
+            inner_r=span,
+        )
+
+    def draw_pie(
+        self,
+        cx: float,
+        cy: float,
+        r: float,
+        angle_start: float,
+        angle_end: float,
+        color: tuple[float, float, float, float],
+    ) -> None:
+        """Draw a filled circle sector (pie slice).
+
+        Args:
+            cx: Centre x in virtual coordinates.
+            cy: Centre y in virtual coordinates.
+            r: Radius in virtual pixels.
+            angle_start: Start angle in radians.
+            angle_end: End angle in radians.
+            color: RGBA (0..1) fill colour.
+        """
+        import math
+        span = (angle_end - angle_start) % (2.0 * math.pi)
+        if span < 1e-6:
+            span = 2.0 * math.pi
+        self._shape_batch.add_quad(
+            cx - r, cy - r, r * 2.0, r * 2.0, color,
+            shape_type=ShapeType.PIE,
+            corner_r=angle_start,
+            border_t=span,
+        )
+
+    def draw_capsule(
+        self,
+        x: float,
+        y: float,
+        w: float,
+        h: float,
+        color: tuple[float, float, float, float],
+    ) -> None:
+        """Draw a filled capsule (rectangle with fully rounded ends).
+
+        Args:
+            x: Left edge in virtual coordinates.
+            y: Top edge in virtual coordinates.
+            w: Width in virtual pixels.
+            h: Height in virtual pixels.
+            color: RGBA (0..1) fill colour.
+        """
+        self._shape_batch.add_quad(x, y, w, h, color, shape_type=ShapeType.CAPSULE)
+
+    # --- Drop shadow / glow ---
+
+    def draw_drop_shadow(
+        self,
+        x: float,
+        y: float,
+        w: float,
+        h: float,
+        *,
+        ox: float = 4.0,
+        oy: float = 4.0,
+        blur: float = 12.0,
+        radius: float = 0.0,
+        color: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.5),
+    ) -> None:
+        """Draw a soft drop shadow behind a rectangular region.
+
+        The shadow is rendered as a GLOW quad offset by (ox, oy) and expanded
+        by ``blur`` on all sides.  Draw this before the shape it shadows.
+
+        Args:
+            x: Left edge of the shadowed shape in virtual coordinates.
+            y: Top edge of the shadowed shape in virtual coordinates.
+            w: Width of the shadowed shape in virtual pixels.
+            h: Height of the shadowed shape in virtual pixels.
+            ox: Horizontal shadow offset in virtual pixels.
+            oy: Vertical shadow offset in virtual pixels.
+            blur: Glow spread radius in virtual pixels.
+            radius: Corner radius of the shadowed shape.
+            color: RGBA (0..1) shadow colour (alpha controls opacity).
+        """
+        sx = x + ox - blur
+        sy = y + oy - blur
+        sw = w + blur * 2.0
+        sh = h + blur * 2.0
+        self._shape_batch.add_quad(
+            sx, sy, sw, sh, color,
+            shape_type=ShapeType.GLOW,
+            corner_r=blur,
+            border_t=radius,
+        )
+
+    # --- Gradients ---
+
+    def draw_rect_gradient_h(
+        self,
+        x: float,
+        y: float,
+        w: float,
+        h: float,
+        color_left: tuple[float, float, float, float],
+        color_right: tuple[float, float, float, float],
+    ) -> None:
+        """Draw a filled rectangle with a horizontal linear gradient.
+
+        Args:
+            x: Left edge in virtual coordinates.
+            y: Top edge in virtual coordinates.
+            w: Width in virtual pixels.
+            h: Height in virtual pixels.
+            color_left: RGBA (0..1) colour at the left edge.
+            color_right: RGBA (0..1) colour at the right edge.
+        """
+        self._shape_batch.add_quad(x, y, w, h, color_left, color_b=color_right, gradient_mode=1)
+
+    def draw_rect_gradient_corner(
+        self,
+        x: float,
+        y: float,
+        w: float,
+        h: float,
+        c_tl: tuple[float, float, float, float],
+        c_tr: tuple[float, float, float, float],
+        c_bl: tuple[float, float, float, float],
+        c_br: tuple[float, float, float, float],
+    ) -> None:
+        """Draw a rectangle with independent colours at each corner.
+
+        Uses the polygon batch (two triangles) for per-vertex colour support.
+
+        Args:
+            x: Left edge in virtual coordinates.
+            y: Top edge in virtual coordinates.
+            w: Width in virtual pixels.
+            h: Height in virtual pixels.
+            c_tl: RGBA (0..1) colour at the top-left corner.
+            c_tr: RGBA (0..1) colour at the top-right corner.
+            c_bl: RGBA (0..1) colour at the bottom-left corner.
+            c_br: RGBA (0..1) colour at the bottom-right corner.
+        """
+        self._polygon_batch.add_triangle(x,     y,     x + w, y,     x + w, y + h, c_tl, c_tr, c_br)
+        self._polygon_batch.add_triangle(x,     y,     x + w, y + h, x,     y + h, c_tl, c_br, c_bl)
+
+    def draw_circle_gradient(
+        self,
+        cx: float,
+        cy: float,
+        r: float,
+        color_center: tuple[float, float, float, float],
+        color_edge: tuple[float, float, float, float],
+        *,
+        segments: int = 48,
+    ) -> None:
+        """Draw a filled circle with a radial gradient.
+
+        The polygon batch fan-triangulates from the centre outward.
+
+        Args:
+            cx: Centre x in virtual coordinates.
+            cy: Centre y in virtual coordinates.
+            r: Radius in virtual pixels.
+            color_center: RGBA (0..1) colour at the centre.
+            color_edge: RGBA (0..1) colour at the edge.
+            segments: Number of triangular segments (higher = smoother).
+        """
+        import math
+        pts = [
+            (cx + math.cos(2 * math.pi * i / segments) * r,
+             cy + math.sin(2 * math.pi * i / segments) * r)
+            for i in range(segments)
+        ]
+        self._polygon_batch.add_fan(cx, cy, pts, color_center, color_edge)
+
+    # --- Triangles and polygons ---
+
+    def draw_triangle(
+        self,
+        x0: float, y0: float,
+        x1: float, y1: float,
+        x2: float, y2: float,
+        color: tuple[float, float, float, float],
+    ) -> None:
+        """Draw a filled triangle with a uniform colour.
+
+        Args:
+            x0, y0: First vertex in virtual coordinates.
+            x1, y1: Second vertex in virtual coordinates.
+            x2, y2: Third vertex in virtual coordinates.
+            color: RGBA (0..1) fill colour.
+        """
+        self._polygon_batch.add_triangle(x0, y0, x1, y1, x2, y2, color, color, color)
+
+    def draw_polygon(
+        self,
+        points: list[tuple[float, float]],
+        color: tuple[float, float, float, float],
+    ) -> None:
+        """Draw a filled convex polygon via fan triangulation from points[0].
+
+        Args:
+            points: Ordered list of (x, y) vertices in virtual coordinates.
+                    Must be convex for correct rendering.
+            color: RGBA (0..1) fill colour.
+        """
+        n = len(points)
+        if n < 3:
+            return
+        for i in range(1, n - 1):
+            x0, y0 = points[0]
+            x1, y1 = points[i]
+            x2, y2 = points[i + 1]
+            self._polygon_batch.add_triangle(x0, y0, x1, y1, x2, y2, color, color, color)
+
+    # --- Lines ---
+
+    def draw_polyline(
+        self,
+        points: list[tuple[float, float]],
+        thickness: float,
+        color: tuple[float, float, float, float],
+        *,
+        closed: bool = False,
+    ) -> None:
+        """Draw a series of connected line segments.
+
+        Args:
+            points: Ordered list of (x, y) vertices in virtual coordinates.
+            thickness: Line width in virtual pixels.
+            color: RGBA (0..1) colour.
+            closed: If True, connects the last point back to the first.
+        """
+        n = len(points)
+        for i in range(n - 1):
+            x0, y0 = points[i]
+            x1, y1 = points[i + 1]
+            self._shape_batch.add_line(x0, y0, x1, y1, thickness, color)
+        if closed and n > 2:
+            x0, y0 = points[-1]
+            x1, y1 = points[0]
+            self._shape_batch.add_line(x0, y0, x1, y1, thickness, color)
+
+    def draw_dashed_line(
+        self,
+        x0: float,
+        y0: float,
+        x1: float,
+        y1: float,
+        thickness: float,
+        color: tuple[float, float, float, float],
+        *,
+        dash: float = 8.0,
+        gap: float = 4.0,
+    ) -> None:
+        """Draw a dashed line segment.
+
+        Args:
+            x0: Start x in virtual coordinates.
+            y0: Start y in virtual coordinates.
+            x1: End x in virtual coordinates.
+            y1: End y in virtual coordinates.
+            thickness: Line width in virtual pixels.
+            color: RGBA (0..1) colour.
+            dash: Length of each dash in virtual pixels.
+            gap: Gap between dashes in virtual pixels.
+        """
+        import math
+        dx, dy = x1 - x0, y1 - y0
+        total = math.sqrt(dx * dx + dy * dy)
+        if total < 1e-9:
+            return
+        ux, uy = dx / total, dy / total
+        period = dash + gap
+        t = 0.0
+        while t < total:
+            t1 = min(t + dash, total)
+            self._shape_batch.add_line(x0 + ux * t, y0 + uy * t, x0 + ux * t1, y0 + uy * t1, thickness, color)
+            t += period
+
+    def draw_bezier_quadratic(
+        self,
+        x0: float,
+        y0: float,
+        cx: float,
+        cy: float,
+        x1: float,
+        y1: float,
+        thickness: float,
+        color: tuple[float, float, float, float],
+        *,
+        segments: int = 16,
+    ) -> None:
+        """Draw a quadratic Bezier curve as a polyline.
+
+        Args:
+            x0, y0: Start point in virtual coordinates.
+            cx, cy: Control point in virtual coordinates.
+            x1, y1: End point in virtual coordinates.
+            thickness: Line width in virtual pixels.
+            color: RGBA (0..1) colour.
+            segments: Number of line segments used to approximate the curve.
+        """
+        pts = []
+        for i in range(segments + 1):
+            t = i / segments
+            mt = 1.0 - t
+            pts.append((mt * mt * x0 + 2 * mt * t * cx + t * t * x1,
+                        mt * mt * y0 + 2 * mt * t * cy + t * t * y1))
+        self.draw_polyline(pts, thickness, color)
+
+    def draw_bezier_cubic(
+        self,
+        x0: float,
+        y0: float,
+        cx0: float,
+        cy0: float,
+        cx1: float,
+        cy1: float,
+        x1: float,
+        y1: float,
+        thickness: float,
+        color: tuple[float, float, float, float],
+        *,
+        segments: int = 24,
+    ) -> None:
+        """Draw a cubic Bezier curve as a polyline.
+
+        Args:
+            x0, y0: Start point in virtual coordinates.
+            cx0, cy0: First control point in virtual coordinates.
+            cx1, cy1: Second control point in virtual coordinates.
+            x1, y1: End point in virtual coordinates.
+            thickness: Line width in virtual pixels.
+            color: RGBA (0..1) colour.
+            segments: Number of line segments used to approximate the curve.
+        """
+        pts = []
+        for i in range(segments + 1):
+            t = i / segments
+            mt = 1.0 - t
+            pts.append((mt ** 3 * x0 + 3 * mt ** 2 * t * cx0 + 3 * mt * t ** 2 * cx1 + t ** 3 * x1,
+                        mt ** 3 * y0 + 3 * mt ** 2 * t * cy0 + 3 * mt * t ** 2 * cy1 + t ** 3 * y1))
+        self.draw_polyline(pts, thickness, color)
+
+    # --- Sprites ---
+
+    def draw_sprite(
+        self,
+        texture,
+        x: float,
+        y: float,
+        w: float,
+        h: float,
+        *,
+        tint: tuple[float, float, float, float] = (1.0, 1.0, 1.0, 1.0),
+        src: tuple[float, float, float, float] = (0.0, 0.0, 1.0, 1.0),
+    ) -> None:
+        """Draw a textured sprite quad.
+
+        Flushes the shape and polygon batches first to preserve draw order.
+
+        Args:
+            texture: moderngl Texture to sample.
+            x: Left edge in virtual coordinates.
+            y: Top edge in virtual coordinates.
+            w: Width in virtual pixels.
+            h: Height in virtual pixels.
+            tint: RGBA (0..1) colour multiplier.
+            src: (u0, v0, u1, v1) normalised texcoord sub-rectangle.
+        """
+        self._shape_batch.flush()
+        self._polygon_batch.flush()
+        self._sprite_batch.add_quad(x, y, w, h, texture, tint=tint, src=src)
+
+    def draw_nine_slice(
+        self,
+        texture,
+        x: float,
+        y: float,
+        w: float,
+        h: float,
+        border: float,
+        *,
+        tint: tuple[float, float, float, float] = (1.0, 1.0, 1.0, 1.0),
+    ) -> None:
+        """Draw a nine-slice scaled texture (UI panel / frame).
+
+        The texture is divided into a 3×3 grid by ``border`` pixels on each
+        side.  Corner cells are drawn at their natural size; edge and centre
+        cells stretch to fill the target dimensions.
+
+        Args:
+            texture: moderngl Texture to sample.
+            x: Left edge in virtual coordinates.
+            y: Top edge in virtual coordinates.
+            w: Width in virtual pixels (>= 2 * border).
+            h: Height in virtual pixels (>= 2 * border).
+            border: Corner/edge width in texels.
+            tint: RGBA (0..1) colour multiplier.
+        """
+        self._shape_batch.flush()
+        self._polygon_batch.flush()
+        tw, th = texture.width, texture.height
+        bx, by = border / tw, border / th
+        b = border
+        cols_d = [x, x + b, x + w - b]
+        cols_w = [b, w - 2 * b, b]
+        rows_d = [y, y + b, y + h - b]
+        rows_h = [b, h - 2 * b, b]
+        cols_u = [0.0, bx, 1.0 - bx]
+        cols_uw = [bx, 1.0 - 2 * bx, bx]
+        rows_v = [0.0, by, 1.0 - by]
+        rows_vh = [by, 1.0 - 2 * by, by]
+        for row in range(3):
+            for col in range(3):
+                src = (cols_u[col], rows_v[row],
+                       cols_u[col] + cols_uw[col], rows_v[row] + rows_vh[row])
+                self._sprite_batch.add_quad(cols_d[col], rows_d[row], cols_w[col], rows_h[row],
+                                            texture, tint=tint, src=src)
+
     def present(self) -> None:
         """Flush pending batches and swap / finish the frame.
 
@@ -679,6 +1164,7 @@ class Renderer:
         (or ctx.finish()) is usually sufficient.
         """
         self._shape_batch.flush()
+        self._polygon_batch.flush()
         self._sprite_batch.flush()
 
         for tex in self._frame_textures:
