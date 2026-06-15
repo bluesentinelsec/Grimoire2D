@@ -10,6 +10,7 @@ Callers feed geometry every frame with ``add_quad`` / ``add_line``;
 calls ``flush()`` automatically before any state-changing operation and
 at the end of each frame in ``present()``.
 """
+
 from __future__ import annotations
 
 import array
@@ -70,9 +71,7 @@ class ShapeBatch:
         self._capacity = capacity
         self._quad_count = 0
         self._stride = self._FLOATS_PER_VERTEX * self._VERTS_PER_QUAD
-        self._data: array.array = array.array(
-            "f", [0.0] * (capacity * self._stride)
-        )
+        self._data: array.array = array.array("f", [0.0] * (capacity * self._stride))
         reserve = capacity * self._stride * 4
         self._vbo: moderngl.Buffer = ctx.buffer(reserve=reserve, dynamic=True)
         self._vao: moderngl.VertexArray = ctx.vertex_array(
@@ -105,7 +104,7 @@ class ShapeBatch:
         """Write one vertex (14 floats) starting at *base* in ``_data``."""
         r, g, b, a = color
         p0, p1, p2, p3 = params
-        self._data[base:base + 14] = array.array(
+        self._data[base : base + 14] = array.array(
             "f", [px, py, lx, ly, hw, hh, r, g, b, a, p0, p1, p2, p3]
         )
 
@@ -182,12 +181,24 @@ class ShapeBatch:
             c_tl, c_tr, c_br, c_bl = color, color, cb, cb
 
         base = self._quad_count * self._stride
-        self._write_vertex(base + 0 * 14,  tl_x, tl_y, tl_lx, tl_ly, hw, hh, c_tl, params)
-        self._write_vertex(base + 1 * 14,  tr_x, tr_y, tr_lx, tr_ly, hw, hh, c_tr, params)
-        self._write_vertex(base + 2 * 14,  br_x, br_y, br_lx, br_ly, hw, hh, c_br, params)
-        self._write_vertex(base + 3 * 14,  tl_x, tl_y, tl_lx, tl_ly, hw, hh, c_tl, params)
-        self._write_vertex(base + 4 * 14,  br_x, br_y, br_lx, br_ly, hw, hh, c_br, params)
-        self._write_vertex(base + 5 * 14,  bl_x, bl_y, bl_lx, bl_ly, hw, hh, c_bl, params)
+        self._write_vertex(
+            base + 0 * 14, tl_x, tl_y, tl_lx, tl_ly, hw, hh, c_tl, params
+        )
+        self._write_vertex(
+            base + 1 * 14, tr_x, tr_y, tr_lx, tr_ly, hw, hh, c_tr, params
+        )
+        self._write_vertex(
+            base + 2 * 14, br_x, br_y, br_lx, br_ly, hw, hh, c_br, params
+        )
+        self._write_vertex(
+            base + 3 * 14, tl_x, tl_y, tl_lx, tl_ly, hw, hh, c_tl, params
+        )
+        self._write_vertex(
+            base + 4 * 14, br_x, br_y, br_lx, br_ly, hw, hh, c_br, params
+        )
+        self._write_vertex(
+            base + 5 * 14, bl_x, bl_y, bl_lx, bl_ly, hw, hh, c_bl, params
+        )
 
         self._quad_count += 1
 
@@ -240,7 +251,12 @@ class ShapeBatch:
         hw = half_len
         hh = half_t
 
-        params: tuple[float, float, float, float] = (0.0, 0.0, 0.0, float(ShapeType.RECT))
+        params: tuple[float, float, float, float] = (
+            0.0,
+            0.0,
+            0.0,
+            float(ShapeType.RECT),
+        )
 
         tl_x = x0 - perp_x
         tl_y = y0 - perp_y
@@ -264,12 +280,24 @@ class ShapeBatch:
         bl_lx, bl_ly = local(bl_x, bl_y)
 
         base = self._quad_count * self._stride
-        self._write_vertex(base + 0 * 14, tl_x, tl_y, tl_lx, tl_ly, hw, hh, color, params)
-        self._write_vertex(base + 1 * 14, tr_x, tr_y, tr_lx, tr_ly, hw, hh, color, params)
-        self._write_vertex(base + 2 * 14, br_x, br_y, br_lx, br_ly, hw, hh, color, params)
-        self._write_vertex(base + 3 * 14, tl_x, tl_y, tl_lx, tl_ly, hw, hh, color, params)
-        self._write_vertex(base + 4 * 14, br_x, br_y, br_lx, br_ly, hw, hh, color, params)
-        self._write_vertex(base + 5 * 14, bl_x, bl_y, bl_lx, bl_ly, hw, hh, color, params)
+        self._write_vertex(
+            base + 0 * 14, tl_x, tl_y, tl_lx, tl_ly, hw, hh, color, params
+        )
+        self._write_vertex(
+            base + 1 * 14, tr_x, tr_y, tr_lx, tr_ly, hw, hh, color, params
+        )
+        self._write_vertex(
+            base + 2 * 14, br_x, br_y, br_lx, br_ly, hw, hh, color, params
+        )
+        self._write_vertex(
+            base + 3 * 14, tl_x, tl_y, tl_lx, tl_ly, hw, hh, color, params
+        )
+        self._write_vertex(
+            base + 4 * 14, br_x, br_y, br_lx, br_ly, hw, hh, color, params
+        )
+        self._write_vertex(
+            base + 5 * 14, bl_x, bl_y, bl_lx, bl_ly, hw, hh, color, params
+        )
 
         self._quad_count += 1
 
@@ -307,7 +335,9 @@ class PolygonBatch:
     _FLOATS_PER_VERTEX: int = 6
     _VERTS_PER_TRI: int = 3
 
-    def __init__(self, ctx: moderngl.Context, program: moderngl.Program, capacity: int = 4096) -> None:
+    def __init__(
+        self, ctx: moderngl.Context, program: moderngl.Program, capacity: int = 4096
+    ) -> None:
         """Initialise with a pre-allocated buffer for *capacity* triangles.
 
         Args:
@@ -321,17 +351,24 @@ class PolygonBatch:
         self._data: array.array = array.array("f", [0.0] * (capacity * self._stride))
         reserve = capacity * self._stride * 4
         self._vbo = ctx.buffer(reserve=reserve, dynamic=True)
-        self._vao = ctx.vertex_array(program, [(self._vbo, "2f 4f", "in_pos", "in_color")])
+        self._vao = ctx.vertex_array(
+            program, [(self._vbo, "2f 4f", "in_pos", "in_color")]
+        )
 
-    def _write_vertex(self, base: int, px: float, py: float, r: float, g: float, b: float, a: float) -> None:
+    def _write_vertex(
+        self, base: int, px: float, py: float, r: float, g: float, b: float, a: float
+    ) -> None:
         """Write one vertex (6 floats) starting at *base* in ``_data``."""
-        self._data[base:base + 6] = array.array("f", [px, py, r, g, b, a])
+        self._data[base : base + 6] = array.array("f", [px, py, r, g, b, a])
 
     def add_triangle(
         self,
-        x0: float, y0: float,
-        x1: float, y1: float,
-        x2: float, y2: float,
+        x0: float,
+        y0: float,
+        x1: float,
+        y1: float,
+        x2: float,
+        y2: float,
         c0: tuple[float, float, float, float],
         c1: tuple[float, float, float, float],
         c2: tuple[float, float, float, float],
@@ -349,8 +386,8 @@ class PolygonBatch:
         if self._tri_count >= self._capacity:
             self.flush()
         base = self._tri_count * self._stride
-        self._write_vertex(base + 0,  x0, y0, *c0)
-        self._write_vertex(base + 6,  x1, y1, *c1)
+        self._write_vertex(base + 0, x0, y0, *c0)
+        self._write_vertex(base + 6, x1, y1, *c1)
         self._write_vertex(base + 12, x2, y2, *c2)
         self._tri_count += 1
 
@@ -375,8 +412,9 @@ class PolygonBatch:
         for i in range(n):
             p0 = points[i]
             p1 = points[(i + 1) % n]
-            self.add_triangle(cx, cy, p0[0], p0[1], p1[0], p1[1],
-                              center_color, edge_color, edge_color)
+            self.add_triangle(
+                cx, cy, p0[0], p0[1], p1[0], p1[1], center_color, edge_color, edge_color
+            )
 
     def flush(self) -> None:
         """Upload accumulated geometry to the GPU and render.
@@ -428,9 +466,7 @@ class SpriteBatch:
         self._capacity = capacity
         self._quad_count = 0
         self._stride = self._FLOATS_PER_VERTEX * self._VERTS_PER_QUAD
-        self._data: array.array = array.array(
-            "f", [0.0] * (capacity * self._stride)
-        )
+        self._data: array.array = array.array("f", [0.0] * (capacity * self._stride))
         reserve = capacity * self._stride * 4
         self._vbo: moderngl.Buffer = ctx.buffer(reserve=reserve, dynamic=True)
         self._vao: moderngl.VertexArray = ctx.vertex_array(
@@ -458,7 +494,7 @@ class SpriteBatch:
     ) -> None:
         """Write one vertex (8 floats) starting at *base* in ``_data``."""
         r, g, b, a = tint
-        self._data[base:base + 8] = array.array("f", [px, py, u, v, r, g, b, a])
+        self._data[base : base + 8] = array.array("f", [px, py, u, v, r, g, b, a])
 
     def add_quad(
         self,
@@ -495,12 +531,12 @@ class SpriteBatch:
         u0, v0, u1, v1 = src
         base = self._quad_count * self._stride
 
-        self._write_vertex(base + 0 * 8, x,     y,     u0, v0, tint)
-        self._write_vertex(base + 1 * 8, x + w, y,     u1, v0, tint)
+        self._write_vertex(base + 0 * 8, x, y, u0, v0, tint)
+        self._write_vertex(base + 1 * 8, x + w, y, u1, v0, tint)
         self._write_vertex(base + 2 * 8, x + w, y + h, u1, v1, tint)
-        self._write_vertex(base + 3 * 8, x,     y,     u0, v0, tint)
+        self._write_vertex(base + 3 * 8, x, y, u0, v0, tint)
         self._write_vertex(base + 4 * 8, x + w, y + h, u1, v1, tint)
-        self._write_vertex(base + 5 * 8, x,     y + h, u0, v1, tint)
+        self._write_vertex(base + 5 * 8, x, y + h, u0, v1, tint)
 
         self._quad_count += 1
 

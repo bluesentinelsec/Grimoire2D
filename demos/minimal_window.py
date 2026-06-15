@@ -1,35 +1,23 @@
-"""Minimal demo: resizable window + data-driven virtual resolution
-with integer scaling and letterboxing.
+"""Minimal demo showing the turnkey GameWindow path (recommended for games).
 
-This is the first visible demonstration of the professional windowing
-contract:
-- Default virtual (game) resolution is 1280x720 (changeable at runtime).
-- The OS window can be any size (drag to resize).
-- The renderer uses integer scaling + letterboxing so game content
-  stays the correct aspect and crisp (when integer_scaling=True).
-- All drawing happens in virtual coordinates; the viewport + projection
-  do the mapping.
+A single call to GameWindow gives you a resizable OpenGL 3.3 window with
+a fixed virtual resolution. The engine handles HiDPI, letterboxing,
+pillarboxing, centering, and scaling so that all drawing happens in the
+virtual coordinate space while the backbuffer is always correctly placed
+on the user's display.
+
+For apps/tools that need the full data-model configuration (EngineConfig +
+extensions for virtual resolution, window policy, video settings, etc.)
+see the (now secondary) open_and_run / AppState path in the source.
 
 Usage:
     python -m demos.minimal_window
 
 Keys (window must have focus):
     ESC - quit
-    1   - switch to 640x360 virtual
-    2   - 1280x720 (the default)
-    3   - 1920x1080
-    4   - 256x224 (classic 8:7-ish retro)
 
-Drag (or shrink) any window edge in windowed mode. The yellow border always
-represents the edges of the *full logical/virtual surface*. When the window
-is smaller than the virtual resolution the entire logical scene remains
-visible but is scaled down (fractionally if needed). Larger windows use
-integer upscaling for crisp pixels + letterboxing. All your drawing uses
-the fixed logical coordinate space; the scaling + centering happens at
-render time via viewport + projection.
-
-Change the BuildConfig to "release" to start in fullscreen_exclusive
-(virtual resolution + letterboxing still apply inside the display res).
+Drag any window edge. The engine recomputes the letterbox so the entire
+1280x720 virtual surface stays visible and centered.
 """
 
 import sys
@@ -38,48 +26,58 @@ from pathlib import Path
 # Allow running without install
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from grimoire2d.models import (
-    AppState,
-    EngineConfig,
-    BuildConfig,
-    WindowSettings,
-    VirtualResolution,
-)
-from grimoire2d.logic.window import get_effective_window_settings
-from grimoire2d.presentation.window import open_and_run
+import pygame
+
+from grimoire2d.presentation.window import GameWindow
 
 
 def main() -> None:
-    # Build the data model for a minimal app.
-    # Virtual resolution is the key new piece for this milestone.
-    build = BuildConfig(mode="dev")
+    # The simple baked-in contract: pick a virtual size, draw in it forever.
+    # GameWindow + Renderer + compute_viewport do the rest (HiDPI, letterbox,
+    # centering, resize handling).  No per-demo math for drawable vs logical.
+    print("GameWindow demo — fixed virtual 1280x720.")
+    print("Drag to resize the OS window; the engine letterboxes/centers automatically.")
+    print("ESC to quit.")
 
-    # Initial window settings (0 = let the system / dev policy decide)
-    window = WindowSettings(mode="windowed", width=0, height=0, maximized=True)
-
-    # Explicit virtual resolution (the default is already 1280x720, but
-    # we show it here so it is obvious this is data and can be changed).
-    virt = VirtualResolution(width=1280, height=720, integer_scaling=True)
-
-    engine = EngineConfig.default()
-    engine = engine.with_updates(
-        extensions={
-            "build": build,
-            "window": window,
-            "virtual_resolution": virt,
-        }
+    win = GameWindow(
+        "Grimoire2D — Minimal Window (GameWindow)",
+        virtual_width=1280,
+        virtual_height=720,
     )
+    r = win.renderer
 
-    app_state = AppState(engine=engine)
+    # Simple content in virtual space (yellow border proves the full virtual
+    # surface is always mapped, never cropped).
+    while win.is_open:
+        for event in win.poll():
+            if event.type == pygame.QUIT:
+                win.close()
+            elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                win.close()
 
-    effective = get_effective_window_settings(app_state.engine)
-    print(f"Effective window mode for this run: {effective.mode}")
-    print(f"Physical request (0 = system): {effective.width}x{effective.height}")
-    print(f"Virtual resolution (data driven): {virt.width}x{virt.height}")
-    print("Drag window borders to resize. Letterboxing + integer scaling update live.")
-    print("Press 1/2/3/4 to change virtual resolution at runtime (ESC to quit).")
+        win.begin_frame()
+        r.draw_rect(0, 0, 1280, 720, (0.08, 0.08, 0.10, 1.0))
+        r.draw_virtual_border(4.0)
+        r.draw_text(
+            "Virtual 1280×720 — engine handles scaling + letterboxing",
+            80,
+            80,
+            color=(0.9, 0.9, 0.2, 1.0),
+            font_size=28,
+        )
+        r.draw_text(
+            "Resize the window; content stays crisp in aspect and fully visible.",
+            80,
+            120,
+            color=(0.7, 0.7, 0.75, 1.0),
+            font_size=20,
+        )
+        r.draw_text(
+            f"FPS: {win.fps:.0f}", 80, 160, color=(1.0, 0.85, 0.2, 1.0), font_size=18
+        )
+        win.end_frame()
 
-    open_and_run(app_state)
+    win.quit()
 
 
 if __name__ == "__main__":

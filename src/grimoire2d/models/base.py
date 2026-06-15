@@ -70,3 +70,17 @@ def register_extension(name: str, model_cls: type[DataModel]) -> None:
     closed for modification while remaining open for extension.
     """
     _settings_registry[name] = model_cls
+
+
+# --- Component registry (enables Actor component deserialization) ---
+_component_registry: dict[str, type[DataModel]] = {}
+
+
+def register_component(name: str, component_cls: type[DataModel]) -> None:
+    """Register an Actor component type for deserialization by slot name.
+
+    Call this at the bottom of a component's module after defining the class.
+    On Actor.from_dict(), known names are reconstructed as typed DataModels;
+    unknown names fall back to raw dicts.
+    """
+    _component_registry[name] = component_cls

@@ -14,9 +14,27 @@ Key behaviors implemented here:
   virtual coordinates.
 - Support for the existing dev/release + window mode policy (from PR3).
 - Vendored shaders as Python string literals (see presentation/shaders.py).
+
+GameWindow
+----------
+For game code that should not care about the underlying display hardware,
+use ``GameWindow``.  The caller specifies a virtual resolution and draws in
+that coordinate space; the engine handles HiDPI, letterboxing, centering,
+and resize events transparently::
+
+    win = GameWindow("My Game", virtual_width=1280, virtual_height=720)
+    while win.is_open:
+        for event in win.poll():
+            if event.type == pygame.QUIT:
+                win.close()
+        dt = win.begin_frame()
+        win.renderer.draw_circle(640, 360, 80, (1.0, 0.4, 0.1, 1.0))
+        win.end_frame()
+    win.quit()
 """
 
 from __future__ import annotations
+
 
 import pygame
 import moderngl
@@ -25,11 +43,11 @@ from grimoire2d.models import (
     AppState,
     EngineConfig,
     VirtualResolution,
-    WindowSettings,
     VideoSettings,
 )
 from grimoire2d.logic.window import get_effective_window_settings
-from grimoire2d.logic.scaling import get_virtual_resolution
+from grimoire2d.logic.scaling import Viewport, get_virtual_resolution
+from grimoire2d.presentation.highdpi import enable_highdpi, get_drawable_size
 from grimoire2d.presentation.renderer import Renderer
 
 
@@ -56,14 +74,223 @@ def _set_gl_context_attributes() -> None:
 
     This must be called before the first pygame.display.set_mode that
     asks for OPENGL. Enforces the "OpenGL 3.30 core only" rule.
+    The forward-compatible flag is required on macOS to get a 3.3 core
+    context (without it the driver silently falls back to 2.1).
     """
     pygame.display.gl_set_attribute(pygame.GL_CONTEXT_MAJOR_VERSION, 3)
     pygame.display.gl_set_attribute(pygame.GL_CONTEXT_MINOR_VERSION, 3)
     pygame.display.gl_set_attribute(
         pygame.GL_CONTEXT_PROFILE_MASK, pygame.GL_CONTEXT_PROFILE_CORE
     )
+    pygame.display.gl_set_attribute(pygame.GL_CONTEXT_FORWARD_COMPATIBLE_FLAG, True)
     # Double buffer is implied by DOUBLEBUF flag but we can be explicit
     pygame.display.gl_set_attribute(pygame.GL_DOUBLEBUFFER, 1)
+
+
+class GameWindow:
+    """Turn-key pygame + OpenGL 3.3 window with automatic virtual-resolution scaling.
+
+    The engine handles everything the caller should not have to think about:
+
+    * HiDPI detection and correct drawable-pixel calculation
+    * OpenGL 3.3 core profile initialization (including the macOS forward-compat flag)
+    * Resizable window: on every ``VIDEORESIZE`` event the letterbox/pillarbox is
+      recomputed so the virtual content stays centered in the window
+    * Blend state and per-frame GL setup
+
+    Game code works entirely in the fixed virtual coordinate space
+    ``(0 .. virtual_width, 0 .. virtual_height)``.  The engine scales that
+    space to fill as much of the physical window as possible while preserving
+    the aspect ratio, with letterbox/pillarbox bars filling the remainder.
+
+    Typical usage::
+
+        win = GameWindow("My Game", virtual_width=1280, virtual_height=720)
+        while win.is_open:
+            for event in win.poll():
+                if event.type == pygame.QUIT:
+                    win.close()
+                elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                    win.close()
+            dt = win.begin_frame()
+            win.renderer.draw_circle(640, 360, 80, (1.0, 0.4, 0.1, 1.0))
+            win.end_frame()
+        win.quit()
+    """
+
+    def __init__(
+        self,
+        title: str = "Grimoire 2D",
+        virtual_width: int = 1280,
+        virtual_height: int = 720,
+        target_fps: int = 60,
+        bar_color: tuple[int, int, int, int] = (0, 0, 0, 255),
+    ) -> None:
+        # HiDPI hints must be set before pygame.init().
+        enable_highdpi()
+        pygame.init()
+        pygame.font.init()
+        _set_gl_context_attributes()
+
+        desk_sizes = pygame.display.get_desktop_sizes()
+        log_w, log_h = desk_sizes[0] if desk_sizes else (virtual_width, virtual_height)
+
+        flags = pygame.OPENGL | pygame.DOUBLEBUF | pygame.RESIZABLE
+        pygame.display.set_mode((log_w, log_h), flags)
+        pygame.display.set_caption(title)
+
+        # Drawable pixels may differ from logical pixels on HiDPI displays.
+        draw_w, draw_h = get_drawable_size(log_w, log_h)
+        self._px_ratio_x: float = draw_w / log_w
+        self._px_ratio_y: float = draw_h / log_h
+
+        ctx = moderngl.create_context()
+        ctx.enable(moderngl.BLEND)
+        ctx.blend_func = moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA
+
+        self._virt_w = virtual_width
+        self._virt_h = virtual_height
+        self._target_fps = target_fps
+        self._is_open = True
+
+        vr = VirtualResolution(
+            width=virtual_width, height=virtual_height, integer_scaling=False
+        )
+        self._renderer = Renderer(ctx, vr)
+        self._renderer.set_clear_color(bar_color)
+        self._renderer.handle_physical_resize(draw_w, draw_h)
+
+        self._clock = pygame.time.Clock()
+        self._dt: float = 0.0
+
+    # ------------------------------------------------------------------ #
+    # Properties
+    # ------------------------------------------------------------------ #
+
+    @property
+    def renderer(self) -> Renderer:
+        """The Renderer for this window. Draw with it between begin_frame / end_frame."""
+        return self._renderer
+
+    @property
+    def is_open(self) -> bool:
+        """True until close() is called."""
+        return self._is_open
+
+    @property
+    def virtual_width(self) -> int:
+        """Width of the virtual coordinate space in logical pixels."""
+        return self._virt_w
+
+    @property
+    def virtual_height(self) -> int:
+        """Height of the virtual coordinate space in logical pixels."""
+        return self._virt_h
+
+    @property
+    def dt(self) -> float:
+        """Delta-time in seconds from the most recent begin_frame() call."""
+        return self._dt
+
+    @property
+    def fps(self) -> float:
+        """Measured frames per second (moving average)."""
+        return self._clock.get_fps()
+
+    @property
+    def viewport(self) -> Viewport:
+        """Current letterbox viewport in physical (drawable) pixels.
+
+        Advanced use only.  Most code draws in virtual coordinates and uses
+        poll/begin_frame/end_frame; this is exposed for custom input math or
+        overlays when you must know the exact placement of the game rect.
+        """
+        return self._renderer.viewport
+
+    def screen_to_virtual(self, x: float, y: float) -> tuple[float, float]:
+        """Map a point from logical window client coordinates into virtual space.
+
+        Use this for mouse input (pygame.mouse.get_pos()) so that your game/UI
+        logic receives coordinates in the same 0..virtual_width, 0..virtual_height
+        space that all drawing functions expect.
+
+        Points landing in the letterbox/pillarbox return values outside the
+        virtual rect (negative or > virtual size).  Clamping is the caller's
+        responsibility if desired.
+        """
+        vp = self._renderer.viewport
+        if vp.viewport_width <= 0 or vp.viewport_height <= 0:
+            return 0.0, 0.0
+        # Viewport offsets and sizes are in physical (drawable) pixels.
+        # Mouse and resize events are in logical pixels; apply the ratio.
+        phys_l = vp.offset_x
+        phys_t = vp.offset_y
+        phys_w = vp.viewport_width
+        phys_h = vp.viewport_height
+
+        log_l = phys_l / self._px_ratio_x
+        log_t = phys_t / self._px_ratio_y
+        log_w = phys_w / self._px_ratio_x
+        log_h = phys_h / self._px_ratio_y
+
+        vx = (x - log_l) / log_w * self._virt_w
+        vy = (y - log_t) / log_h * self._virt_h
+        return vx, vy
+
+    # ------------------------------------------------------------------ #
+    # Frame lifecycle
+    # ------------------------------------------------------------------ #
+
+    def poll(self) -> list[pygame.event.Event]:
+        """Consume all pending pygame events; handle VIDEORESIZE internally.
+
+        Window resize events are processed transparently — the physical
+        drawable size is updated and the letterbox layout is recomputed so
+        the virtual content stays centered.  All other events are returned
+        to the caller unchanged.
+        """
+        result: list[pygame.event.Event] = []
+        for event in pygame.event.get():
+            if event.type == pygame.VIDEORESIZE:
+                draw_w = round(event.w * self._px_ratio_x)
+                draw_h = round(event.h * self._px_ratio_y)
+                # Virtual resolution is fixed; only physical size changes.
+                # compute_viewport() will re-centre and re-letterbox automatically.
+                self._renderer.handle_physical_resize(draw_w, draw_h)
+            else:
+                result.append(event)
+        return result
+
+    def begin_frame(self) -> float:
+        """Tick the clock and set up the GL frame.  Returns delta-time in seconds.
+
+        Internally calls ``renderer.prepare_frame()`` which:
+        - Fills letterbox/pillarbox bars with the bar color
+        - Clears the game viewport
+        - Positions the GL viewport inside the physical window
+
+        Draw using ``win.renderer`` after this call.
+        """
+        self._dt = self._clock.tick(self._target_fps) / 1000.0
+        self._renderer.prepare_frame()
+        return self._dt
+
+    def end_frame(self) -> None:
+        """Flush renderer batches and flip the back buffer to the screen."""
+        self._renderer.present()
+        pygame.display.flip()
+
+    # ------------------------------------------------------------------ #
+    # Lifecycle
+    # ------------------------------------------------------------------ #
+
+    def close(self) -> None:
+        """Signal the window to stop (sets is_open to False)."""
+        self._is_open = False
+
+    def quit(self) -> None:
+        """Shut down pygame.  Call once after the main loop exits."""
+        pygame.quit()
 
 
 def open_and_run(app_state: AppState | None = None) -> None:

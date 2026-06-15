@@ -1,4 +1,5 @@
 """CPU-side RGBA pixel buffer with single-upload-per-frame GL texture backing."""
+
 from __future__ import annotations
 
 import moderngl
@@ -76,7 +77,7 @@ class PixelBuffer:
         pixel = bytes(color)
         base = (y * self.width + x_start) * 4
         for i in range(x_end - x_start):
-            self._data[base + i * 4: base + i * 4 + 4] = pixel
+            self._data[base + i * 4 : base + i * 4 + 4] = pixel
         self._dirty = True
 
     def plot_vline(
@@ -103,7 +104,7 @@ class PixelBuffer:
         pixel = bytes(color)
         for row in range(y_start, y_end):
             i = (row * self.width + x) * 4
-            self._data[i: i + 4] = pixel
+            self._data[i : i + 4] = pixel
         self._dirty = True
 
     def clear(self, color: tuple[int, int, int, int] = (0, 0, 0, 255)) -> None:
@@ -115,7 +116,7 @@ class PixelBuffer:
         pixel = bytes(color)
         n = self.width * self.height
         for i in range(n):
-            self._data[i * 4: i * 4 + 4] = pixel
+            self._data[i * 4 : i * 4 + 4] = pixel
         self._dirty = True
 
     def upload(self) -> None:

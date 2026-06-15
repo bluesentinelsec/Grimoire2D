@@ -7,7 +7,7 @@ The Renderer (and the vendored shaders) are the implementation of the
 real GL pipeline. Most callers only need the high-level open_and_run.
 """
 
-from .window import open_and_run, open_window_with_config
+from .window import open_and_run, open_window_with_config, GameWindow
 from .renderer import Renderer
 from .batch import ShapeBatch, SpriteBatch, ShapeType
 from .pixel_buffer import PixelBuffer
@@ -18,6 +18,7 @@ from .tcp_transport import TcpTransport, InMemoryTransport
 __all__ = [
     "open_and_run",
     "open_window_with_config",
+    "GameWindow",
     "Renderer",
     "ShapeBatch",
     "SpriteBatch",

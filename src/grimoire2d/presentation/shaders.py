@@ -12,6 +12,7 @@ or load text via the future VFS for artist-editable .vert/.frag files.
 
 All shaders target OpenGL 3.30 core.
 """
+
 from __future__ import annotations
 
 

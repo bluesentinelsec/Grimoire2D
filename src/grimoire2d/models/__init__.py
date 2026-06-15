@@ -24,8 +24,12 @@ from . import player
 from . import input_frame
 from . import multiplayer
 from . import pause
+from . import components
+from . import actor
+from . import scene
+from . import scene_graph
 
-from .base import DataModel, register_extension
+from .base import DataModel, register_extension, register_component
 from .config import EngineConfig
 from .app_state import AppState
 
@@ -56,6 +60,17 @@ from .pause import (
     GROUP_UI,
     GROUP_INPUT,
 )
+from .components import TransformComponent, VelocityComponent
+from .actor import Actor
+from .scene import (
+    Scene,
+    SCENE_STATUS_LOADING,
+    SCENE_STATUS_ACTIVE,
+    SCENE_STATUS_PAUSED,
+    SCENE_STATUS_CLOSING,
+    SCENE_STATUS_CLOSED,
+)
+from .scene_graph import SceneGraph
 
 __all__ = [
     "DataModel",
@@ -90,4 +105,15 @@ __all__ = [
     "GROUP_AUDIO",
     "GROUP_UI",
     "GROUP_INPUT",
+    "TransformComponent",
+    "VelocityComponent",
+    "Actor",
+    "Scene",
+    "SCENE_STATUS_LOADING",
+    "SCENE_STATUS_ACTIVE",
+    "SCENE_STATUS_PAUSED",
+    "SCENE_STATUS_CLOSING",
+    "SCENE_STATUS_CLOSED",
+    "SceneGraph",
+    "register_component",
 ]

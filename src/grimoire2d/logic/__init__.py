@@ -30,6 +30,21 @@ from .pause_logic import (
     toggle_pause,
     is_paused,
 )
+from .scene_ops import (
+    create_scene,
+    close_scene,
+    set_active_scene,
+    query_scenes,
+    get_scene,
+    spawn_actor,
+    destroy_actor,
+    set_actor_active,
+    query_actors,
+    get_actor,
+    update_component,
+    get_component,
+    remove_component,
+)
 
 __all__ = [
     "get_effective_window_settings",
@@ -60,4 +75,17 @@ __all__ = [
     "request_unpause",
     "toggle_pause",
     "is_paused",
+    "create_scene",
+    "close_scene",
+    "set_active_scene",
+    "query_scenes",
+    "get_scene",
+    "spawn_actor",
+    "destroy_actor",
+    "set_actor_active",
+    "query_actors",
+    "get_actor",
+    "update_component",
+    "get_component",
+    "remove_component",
 ]

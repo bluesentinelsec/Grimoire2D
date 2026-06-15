@@ -23,6 +23,7 @@ Usage::
     draw_w, draw_h = get_drawable_size(*logical_size)
     # draw_w / draw_h are the native physical pixels to target.
 """
+
 from __future__ import annotations
 
 import ctypes
@@ -44,15 +45,16 @@ def _pygame_sdl2_path() -> str | None:
     """Return the absolute path of the SDL2 shared library bundled with pygame."""
     try:
         import pygame as _pg
+
         base = pathlib.Path(_pg.__file__).parent
     except ImportError:
         return None
 
     candidates = [
-        base / ".dylibs" / "libSDL2-2.0.0.dylib",   # macOS (pygame-ce)
-        base / ".dylibs" / "libSDL2-2.0.so.0",       # Linux bundled
+        base / ".dylibs" / "libSDL2-2.0.0.dylib",  # macOS (pygame-ce)
+        base / ".dylibs" / "libSDL2-2.0.so.0",  # Linux bundled
         base / "libSDL2-2.0.so.0",
-        base / "SDL2.dll",                            # Windows
+        base / "SDL2.dll",  # Windows
     ]
     for p in candidates:
         if p.exists():
