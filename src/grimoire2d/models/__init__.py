@@ -23,6 +23,7 @@ from . import virtual_resolution
 from . import player
 from . import input_frame
 from . import multiplayer
+from . import pause
 
 from .base import DataModel, register_extension
 from .config import EngineConfig
@@ -47,6 +48,13 @@ from .multiplayer import (
     TOPOLOGY_SPLIT_SCREEN,
     TOPOLOGY_NETWORK_HOST,
     TOPOLOGY_NETWORK_CLIENT,
+)
+from .pause import (
+    PauseState,
+    GROUP_GAMEPLAY,
+    GROUP_AUDIO,
+    GROUP_UI,
+    GROUP_INPUT,
 )
 
 __all__ = [
@@ -77,4 +85,9 @@ __all__ = [
     "TOPOLOGY_SPLIT_SCREEN",
     "TOPOLOGY_NETWORK_HOST",
     "TOPOLOGY_NETWORK_CLIENT",
+    "PauseState",
+    "GROUP_GAMEPLAY",
+    "GROUP_AUDIO",
+    "GROUP_UI",
+    "GROUP_INPUT",
 ]

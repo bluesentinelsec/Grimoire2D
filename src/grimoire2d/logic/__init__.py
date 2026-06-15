@@ -23,6 +23,13 @@ from .network_protocol import (
     read_length,
     LENGTH_PREFIX_SIZE,
 )
+from .pause_logic import (
+    can_pause,
+    request_pause,
+    request_unpause,
+    toggle_pause,
+    is_paused,
+)
 
 __all__ = [
     "get_effective_window_settings",
@@ -48,4 +55,9 @@ __all__ = [
     "decode_state",
     "read_length",
     "LENGTH_PREFIX_SIZE",
+    "can_pause",
+    "request_pause",
+    "request_unpause",
+    "toggle_pause",
+    "is_paused",
 ]

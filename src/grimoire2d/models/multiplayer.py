@@ -84,24 +84,25 @@ class ViewportAssignment(DataModel):
 
 @dataclass(frozen=True, slots=True)
 class SimulationState(DataModel):
-    """Authoritative tick counter and pause flag.
+    """Authoritative tick counter.
 
     tick is the number of fixed-rate simulation steps completed.
     The game loop advances tick via SimulationClock; this model persists it.
+
+    Pause state is held in models.pause.PauseState (the single source of
+    truth for all group-aware pause behaviour).
     """
 
-    tick:    int  = 0
-    paused:  bool = False
-    version: int  = 1
+    tick:    int = 0
+    version: int = 1
 
     def to_dict(self) -> dict[str, Any]:
-        return {"tick": self.tick, "paused": self.paused, "version": self.version}
+        return {"tick": self.tick, "version": self.version}
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> SimulationState:
         return cls(
             tick=    data.get("tick",    0),
-            paused=  data.get("paused",  False),
             version= data.get("version", 1),
         )
 

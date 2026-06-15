@@ -37,15 +37,13 @@ class TestSimulationState(unittest.TestCase):
     def test_defaults(self):
         s = SimulationState()
         self.assertEqual(s.tick, 0)
-        self.assertFalse(s.paused)
 
     def test_with_updates(self):
-        s = SimulationState().with_updates(tick=10, paused=True)
+        s = SimulationState().with_updates(tick=10)
         self.assertEqual(s.tick, 10)
-        self.assertTrue(s.paused)
 
     def test_roundtrip_serialization(self):
-        s = SimulationState(tick=42, paused=True)
+        s = SimulationState(tick=42)
         restored = SimulationState.from_dict(s.to_dict())
         self.assertEqual(restored, s)
 
