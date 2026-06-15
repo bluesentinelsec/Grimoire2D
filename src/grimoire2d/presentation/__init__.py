@@ -12,6 +12,8 @@ from .renderer import Renderer
 from .batch import ShapeBatch, SpriteBatch, ShapeType
 from .pixel_buffer import PixelBuffer
 from .highdpi import enable_highdpi, get_drawable_size
+from .multi_viewport_renderer import render_scene, SceneFn
+from .tcp_transport import TcpTransport, InMemoryTransport
 
 __all__ = [
     "open_and_run",
@@ -23,4 +25,8 @@ __all__ = [
     "PixelBuffer",
     "enable_highdpi",
     "get_drawable_size",
+    "render_scene",
+    "SceneFn",
+    "TcpTransport",
+    "InMemoryTransport",
 ]

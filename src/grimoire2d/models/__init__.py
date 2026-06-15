@@ -20,6 +20,9 @@ from . import app_state
 from . import window_settings
 from . import build_config
 from . import virtual_resolution
+from . import player
+from . import input_frame
+from . import multiplayer
 
 from .base import DataModel, register_extension
 from .config import EngineConfig
@@ -34,6 +37,17 @@ from .input import InputState
 from .window_settings import WindowSettings
 from .build_config import BuildConfig
 from .virtual_resolution import VirtualResolution
+from .player import PlayerIdentity, PlayerRoster, ROLE_LOCAL, ROLE_REMOTE, ROLE_AI, ROLE_REPLAY
+from .input_frame import InputFrame, InputBuffer
+from .multiplayer import (
+    MultiplayerConfig,
+    ViewportAssignment,
+    SimulationState,
+    TOPOLOGY_SHARED_SCREEN,
+    TOPOLOGY_SPLIT_SCREEN,
+    TOPOLOGY_NETWORK_HOST,
+    TOPOLOGY_NETWORK_CLIENT,
+)
 
 __all__ = [
     "DataModel",
@@ -48,4 +62,19 @@ __all__ = [
     "WindowSettings",
     "BuildConfig",
     "VirtualResolution",
+    "PlayerIdentity",
+    "PlayerRoster",
+    "ROLE_LOCAL",
+    "ROLE_REMOTE",
+    "ROLE_AI",
+    "ROLE_REPLAY",
+    "InputFrame",
+    "InputBuffer",
+    "MultiplayerConfig",
+    "ViewportAssignment",
+    "SimulationState",
+    "TOPOLOGY_SHARED_SCREEN",
+    "TOPOLOGY_SPLIT_SCREEN",
+    "TOPOLOGY_NETWORK_HOST",
+    "TOPOLOGY_NETWORK_CLIENT",
 ]

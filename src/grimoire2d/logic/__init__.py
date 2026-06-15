@@ -6,6 +6,23 @@ This package will contain the business logic that operates on models.
 from .window import get_effective_window_settings, apply_runtime_mode_change
 from .scaling import Viewport, compute_viewport, get_virtual_resolution
 from .sdf import sdf_rect, sdf_rounded_rect, sdf_circle, sdf_ring, sdf_stroke
+from .input_router import (
+    InputSource,
+    LocalInputSource,
+    StaticInputSource,
+    SequencedInputSource,
+    route_inputs,
+)
+from .simulation import SimulationClock
+from .viewport_layout import compute_viewports
+from .network_protocol import (
+    encode_frame,
+    decode_frame,
+    encode_state,
+    decode_state,
+    read_length,
+    LENGTH_PREFIX_SIZE,
+)
 
 __all__ = [
     "get_effective_window_settings",
@@ -18,4 +35,17 @@ __all__ = [
     "sdf_circle",
     "sdf_ring",
     "sdf_stroke",
+    "InputSource",
+    "LocalInputSource",
+    "StaticInputSource",
+    "SequencedInputSource",
+    "route_inputs",
+    "SimulationClock",
+    "compute_viewports",
+    "encode_frame",
+    "decode_frame",
+    "encode_state",
+    "decode_state",
+    "read_length",
+    "LENGTH_PREFIX_SIZE",
 ]
