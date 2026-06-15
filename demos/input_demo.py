@@ -401,14 +401,15 @@ def main() -> None:
     pygame.display.gl_set_attribute(pygame.GL_DOUBLEBUFFER, 1)
 
     info = pygame.display.Info()
+    log_w, log_h = info.current_w, info.current_h
     flags = pygame.OPENGL | pygame.DOUBLEBUF | pygame.RESIZABLE
-    pygame.display.set_mode((info.current_w, info.current_h), flags)
+    pygame.display.set_mode((log_w, log_h), flags)
     pygame.display.set_caption("Grimoire2D — Input System Demo")
 
     ctx = moderngl.create_context()
     virt = VirtualResolution(width=VW, height=VH, integer_scaling=False)
     renderer = Renderer(ctx, initial_virtual=virt)
-    phys_w, phys_h = get_drawable_size()
+    phys_w, phys_h = get_drawable_size(log_w, log_h)
     renderer.handle_physical_resize(phys_w, phys_h)
     renderer.set_clear_color((0.06, 0.06, 0.09, 1.0))
 
@@ -435,11 +436,12 @@ def main() -> None:
             elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
                 running = False
             elif event.type == pygame.VIDEORESIZE:
-                phys_w, phys_h = get_drawable_size()
+                log_w, log_h = event.size
+                phys_w, phys_h = get_drawable_size(log_w, log_h)
                 renderer.handle_physical_resize(phys_w, phys_h)
 
         # Build viewport for mouse coordinate mapping
-        phys_w, phys_h = get_drawable_size()
+        phys_w, phys_h = get_drawable_size(log_w, log_h)
         vp = compute_viewport(virt, phys_w, phys_h)
         raw = input_manager.poll(
             tick,
