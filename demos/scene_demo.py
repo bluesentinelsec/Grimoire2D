@@ -50,6 +50,27 @@ from grimoire2d.logic.scene_ops import (
 )
 
 # ---------------------------------------------------------------------------
+# Text helpers (Renderer.draw_text has no align= param)
+# ---------------------------------------------------------------------------
+
+def _text(r: Renderer, text: str, x: float, y: float, *,
+          color=(1.0, 1.0, 1.0, 1.0), fs: int = 22) -> None:
+    r.draw_text(text, x, y, color=color, font_size=fs)
+
+
+def _text_c(r: Renderer, text: str, cx: float, y: float, *,
+            color=(1.0, 1.0, 1.0, 1.0), fs: int = 22) -> None:
+    w, _ = r.measure_text(text, font_size=fs)
+    r.draw_text(text, cx - w * 0.5, y, color=color, font_size=fs)
+
+
+def _text_r(r: Renderer, text: str, rx: float, y: float, *,
+            color=(1.0, 1.0, 1.0, 1.0), fs: int = 22) -> None:
+    w, _ = r.measure_text(text, font_size=fs)
+    r.draw_text(text, rx - w, y, color=color, font_size=fs)
+
+
+# ---------------------------------------------------------------------------
 # Geometry helpers
 # ---------------------------------------------------------------------------
 
@@ -85,30 +106,24 @@ def _diamond(cx, cy, r, angle):
 # ---------------------------------------------------------------------------
 
 def _build_graph(lw: float, lh: float) -> tuple[SceneGraph, dict[str, str]]:
-    """Build and return the initial SceneGraph plus a {name: scene_id} map."""
     g = SceneGraph()
     ids: dict[str, str] = {}
     s = lh / 720.0
     cx, cy = lw * 0.5, lh * 0.5
 
-    # -- Splash (no actors needed) --
     g, sid = create_scene(g, "Splash", scene_id="splash")
     ids["splash"] = sid
 
-    # -- Title: 3 decoration actors --
     g, sid = create_scene(g, "Title", scene_id="title")
     ids["title"] = sid
     for i in range(3):
         g, _ = spawn_actor(
             g, sid,
             tags=frozenset({"decoration", "background"}),
-            components={"transform": TransformComponent(
-                x=cx, y=cy, angle=i * (2 * math.pi / 3),
-            )},
+            components={"transform": TransformComponent(x=cx, y=cy)},
             actor_id=f"deco_{i}",
         )
 
-    # -- Gameplay: player + 3 enemies + 2 pickups --
     g, sid = create_scene(g, "Gameplay", scene_id="gameplay")
     ids["gameplay"] = sid
     g, _ = spawn_actor(
@@ -129,25 +144,22 @@ def _build_graph(lw: float, lh: float) -> tuple[SceneGraph, dict[str, str]]:
             actor_id=f"enemy_{i}",
         )
     for i in range(2):
-        px = lw * (0.28 + i * 0.44)
-        py = lh * 0.72
         g, _ = spawn_actor(
             g, sid,
             tags=frozenset({"pickup", "static"}),
-            components={"transform": TransformComponent(x=px, y=py)},
+            components={"transform": TransformComponent(
+                x=lw * (0.28 + i * 0.44), y=lh * 0.72,
+            )},
             actor_id=f"pickup_{i}",
         )
 
-    # -- Options: 3 menu-item actors --
     g, sid = create_scene(g, "Options", scene_id="options")
     ids["options"] = sid
     for i in range(3):
         g, _ = spawn_actor(
             g, sid,
             tags=frozenset({"menu_item"}),
-            components={"transform": TransformComponent(
-                x=cx, y=lh * (0.38 + i * 0.14),
-            )},
+            components={"transform": TransformComponent(x=cx, y=lh * (0.38 + i * 0.14))},
             actor_id=f"opt_{i}",
         )
 
@@ -168,11 +180,11 @@ def _update_title_actors(graph: SceneGraph, frame: int,
             continue
         r = (160 + i * 45) * (lh / 720)
         angle = frame * (0.008 + i * 0.004) + i * (2 * math.pi / 3)
-        x = cx + math.cos(angle) * r
-        y = cy + math.sin(angle) * r
         graph = update_component(
             graph, aid, "transform",
-            TransformComponent(x=x, y=y, angle=angle * 2.5),
+            TransformComponent(x=cx + math.cos(angle) * r,
+                               y=cy + math.sin(angle) * r,
+                               angle=angle * 2.5),
         )
     return graph
 
@@ -182,38 +194,32 @@ def _update_gameplay_actors(graph: SceneGraph, frame: int,
     s = lh / 720
     cx, cy = lw * 0.5, lh * 0.5
 
-    # Player: figure-8 (lemniscate)
     t = frame * 0.022
     denom = 1 + math.sin(t) ** 2 + 1e-6
     px = cx + (200 * s * math.cos(t)) / denom
     py = cy + (180 * s * math.sin(t) * math.cos(t)) / denom
-    pangle = t + math.pi * 0.5
     graph = update_component(
         graph, "player_0", "transform",
-        TransformComponent(x=px, y=py, angle=pangle),
+        TransformComponent(x=px, y=py, angle=t + math.pi * 0.5),
     )
 
-    # Enemies
     for i in range(3):
         if get_actor(graph, f"enemy_{i}") is None:
             continue
         r = (110 + i * 65) * s
         angle = frame * (0.016 + i * 0.009) + i * (2 * math.pi / 3)
-        ex = cx + math.cos(angle) * r
-        ey = cy + math.sin(angle) * r
         graph = update_component(
             graph, f"enemy_{i}", "transform",
-            TransformComponent(x=ex, y=ey, angle=angle * 2),
+            TransformComponent(x=cx + math.cos(angle) * r,
+                               y=cy + math.sin(angle) * r,
+                               angle=angle * 2),
         )
 
-    # Pickups: gentle bob + spin
     for i in range(2):
         if get_actor(graph, f"pickup_{i}") is None:
             continue
-        base_x = lw * (0.28 + i * 0.44)
-        base_y = lh * 0.72
-        bx = base_x + math.sin(frame * 0.03 + i * math.pi) * 18 * s
-        by = base_y + math.cos(frame * 0.02 + i * math.pi) * 10 * s
+        bx = lw * (0.28 + i * 0.44) + math.sin(frame * 0.03 + i * math.pi) * 18 * s
+        by = lh * 0.72 + math.cos(frame * 0.02 + i * math.pi) * 10 * s
         graph = update_component(
             graph, f"pickup_{i}", "transform",
             TransformComponent(x=bx, y=by, angle=frame * 0.04 + i * math.pi),
@@ -230,29 +236,21 @@ def _draw_splash(r: Renderer, scene_frame: int, lw: float, lh: float,
                  s: float) -> None:
     cx, cy = lw * 0.5, lh * 0.5
 
-    # Background glow
-    for i in range(5):
-        ri = (300 - i * 45) * s
+    for i in range(4):
+        ri = (280 - i * 50) * s
         r.draw_circle(cx, cy, ri, (0.18, 0.08, 0.38, 0.03 + i * 0.01))
 
-    # Animated logo
     t = min(scene_frame / 48.0, 1.0)
     ease = 1 - (1 - t) ** 3
     alpha = ease
 
-    font_size = max(int(66 * s), 12)
-    r.draw_text("GRIMOIRE 2D",
-                cx, cy - 24 * s,
-                color=(0.82, 0.55, 1.0, alpha),
-                size=font_size, align="center")
+    _text_c(r, "GRIMOIRE 2D", cx, cy - 24 * s,
+            color=(0.82, 0.55, 1.0, alpha), fs=max(int(66 * s), 12))
 
     sub_alpha = max(0.0, ease - 0.4) / 0.6
-    r.draw_text("Scene & Actor System Demo",
-                cx, cy + 30 * s,
-                color=(0.7, 0.7, 0.92, sub_alpha),
-                size=int(22 * s), align="center")
+    _text_c(r, "Scene & Actor System Demo", cx, cy + 30 * s,
+            color=(0.7, 0.7, 0.92, sub_alpha), fs=max(int(22 * s), 10))
 
-    # Progress bar
     progress = min(scene_frame / 240.0, 1.0)
     bar_w, bar_h = 260 * s, 4 * s
     bx = cx - bar_w * 0.5
@@ -261,9 +259,9 @@ def _draw_splash(r: Renderer, scene_frame: int, lw: float, lh: float,
     if progress > 0:
         r.draw_rect(bx, by, bar_w * progress, bar_h, (0.7, 0.45, 1.0, 0.9))
 
-    r.draw_text("Auto-advancing…   → to skip",
-                cx, by - 16 * s,
-                color=(0.5, 0.5, 0.65, 0.75), size=int(15 * s), align="center")
+    _text_c(r, "Auto-advancing...   Press  right arrow  to skip",
+            cx, by - 20 * s,
+            color=(0.5, 0.5, 0.65, 0.75), fs=max(int(15 * s), 10))
 
 
 def _draw_title(r: Renderer, graph: SceneGraph, frame: int,
@@ -282,15 +280,12 @@ def _draw_title(r: Renderer, graph: SceneGraph, frame: int,
         r.draw_polygon(pts, colors[i % len(colors)])
 
     blink = 0.45 + 0.55 * abs(math.sin(frame * 0.05))
-    r.draw_text("DUNGEON QUEST",
-                cx, cy - 16 * s,
-                color=(1.0, 0.86, 0.3, 1.0), size=int(58 * s), align="center")
-    r.draw_text("A Grimoire 2D Demo",
-                cx, cy + 34 * s,
-                color=(0.72, 0.65, 0.85, 0.82), size=int(20 * s), align="center")
-    r.draw_text("Press  →  to begin",
-                cx, cy + 76 * s,
-                color=(0.82, 0.82, 1.0, blink), size=int(18 * s), align="center")
+    _text_c(r, "DUNGEON QUEST", cx, cy - 16 * s,
+            color=(1.0, 0.86, 0.3, 1.0), fs=max(int(58 * s), 14))
+    _text_c(r, "A Grimoire 2D Demo", cx, cy + 34 * s,
+            color=(0.72, 0.65, 0.85, 0.82), fs=max(int(20 * s), 10))
+    _text_c(r, "Press  right arrow  to begin", cx, cy + 76 * s,
+            color=(0.82, 0.82, 1.0, blink), fs=max(int(18 * s), 10))
 
     _draw_scene_badge(r, "title", len(actors), lw, lh, s)
 
@@ -299,12 +294,10 @@ def _draw_gameplay(r: Renderer, graph: SceneGraph, frame: int,
                    lw: float, lh: float, s: float) -> None:
     cx, cy = lw * 0.5, lh * 0.5
 
-    # Orbit-path rings
     for i in range(3):
         ri = (110 + i * 65) * s
         r.draw_ring(cx, cy, ri + 1.5 * s, ri - 1.5 * s, (0.3, 0.3, 0.5, 0.16))
 
-    # Pickups (gold diamonds)
     for actor in query_actors(graph, scene_id="gameplay", tags={"pickup"}):
         tf = get_component(graph, actor.actor_id, "transform")
         if tf:
@@ -312,7 +305,6 @@ def _draw_gameplay(r: Renderer, graph: SceneGraph, frame: int,
             r.draw_polygon(pts, (1.0, 0.85, 0.15, 0.92))
             r.draw_ring(tf.x, tf.y, 18 * s, 14 * s, (1.0, 0.85, 0.15, 0.3))
 
-    # Enemies (red circles with inner triangle)
     enemies = query_actors(graph, scene_id="gameplay", tags={"enemy"})
     for actor in enemies:
         tf = get_component(graph, actor.actor_id, "transform")
@@ -321,7 +313,6 @@ def _draw_gameplay(r: Renderer, graph: SceneGraph, frame: int,
             tri = _ngon(tf.x, tf.y, 12 * s, 3, tf.angle)
             r.draw_polygon(tri, (0.55, 0.06, 0.06, 0.6))
 
-    # Player (blue arrow)
     for actor in query_actors(graph, scene_id="gameplay", tags={"player"}):
         tf = get_component(graph, actor.actor_id, "transform")
         if tf:
@@ -329,54 +320,51 @@ def _draw_gameplay(r: Renderer, graph: SceneGraph, frame: int,
             r.draw_polygon(pts, (0.22, 0.62, 1.0, 1.0))
             r.draw_circle(tf.x, tf.y, 8 * s, (0.45, 0.82, 1.0, 0.45))
 
-    # Player transform readout
     players = query_actors(graph, scene_id="gameplay", tags={"player"})
     if players:
         tf = get_component(graph, players[0].actor_id, "transform")
         if tf:
-            info = (f"transform  x={tf.x:+.1f}  y={tf.y:+.1f}"
-                    f"  angle={tf.angle:.2f}")
-            r.draw_text(info, 14 * s, lh - 30 * s,
-                        color=(0.45, 0.75, 1.0, 0.7), size=int(14 * s))
+            info = f"transform   x={tf.x:+.1f}   y={tf.y:+.1f}   angle={tf.angle:.2f}"
+            _text(r, info, 14 * s, lh - 30 * s,
+                  color=(0.45, 0.75, 1.0, 0.7), fs=max(int(14 * s), 10))
 
-    # Query HUD panel
     n_players = len(query_actors(graph, scene_id="gameplay", tags={"player"}))
     n_enemies = len(enemies)
     n_pickups = len(query_actors(graph, scene_id="gameplay", tags={"pickup"}))
     total = len(query_actors(graph, scene_id="gameplay"))
 
-    pw, ph = 272 * s, 198 * s
+    pw, ph = 272 * s, 200 * s
     px, py = lw - pw - 12 * s, 12 * s
     r.draw_rect(px, py, pw, ph, (0.06, 0.06, 0.13, 0.90))
 
-    lh_row = 23 * s
+    row_h = 23 * s
     tx, ty = px + 12 * s, py + 12 * s
-    r.draw_text("SCENE GRAPH", tx, ty, color=(0.75, 0.55, 1.0, 1.0), size=int(15 * s))
-    ty += lh_row * 0.8
+    _text(r, "SCENE GRAPH", tx, ty, color=(0.75, 0.55, 1.0, 1.0), fs=max(int(15 * s), 10))
+    ty += row_h * 0.8
     r.draw_rect(px + 8 * s, ty, pw - 16 * s, 1.5 * s, (0.38, 0.38, 0.58, 0.6))
     ty += 8 * s
 
     def _row(label, value, col, highlight=False):
         nonlocal ty
         if highlight:
-            r.draw_rect(px + 4 * s, ty - 2 * s, pw - 8 * s, lh_row,
+            r.draw_rect(px + 4 * s, ty - 2 * s, pw - 8 * s, row_h,
                         (0.18, 0.10, 0.30, 0.55))
-        r.draw_text(label, tx, ty, color=(0.65, 0.65, 0.82, 0.9), size=int(13 * s))
-        r.draw_text(str(value), px + pw - 14 * s, ty, color=col,
-                    size=int(14 * s), align="right")
-        ty += lh_row
+        fs = max(int(13 * s), 9)
+        _text(r, label, tx, ty, color=(0.65, 0.65, 0.82, 0.9), fs=fs)
+        _text_r(r, str(value), px + pw - 14 * s, ty, color=col, fs=max(int(14 * s), 10))
+        ty += row_h
 
     _row("Active scene:", "gameplay", (0.9, 0.9, 1.0, 1.0))
     _row("Total actors:", total, (0.82, 0.82, 0.94, 1.0))
     ty += 4 * s
-    _row('query({"player"})', f"→ {n_players}", (0.3, 0.72, 1.0, 1.0))
-    _row('query({"enemy"})',  f"→ {n_enemies}", (1.0, 0.32, 0.35, 1.0), highlight=True)
-    _row('query({"pickup"})', f"→ {n_pickups}", (1.0, 0.85, 0.2, 1.0))
+    _row('query({"player"})', f"-> {n_players}", (0.3, 0.72, 1.0, 1.0))
+    _row('query({"enemy"})',  f"-> {n_enemies}", (1.0, 0.32, 0.35, 1.0), highlight=True)
+    _row('query({"pickup"})', f"-> {n_pickups}", (1.0, 0.85, 0.2, 1.0))
     ty += 4 * s
     r.draw_rect(px + 8 * s, ty, pw - 16 * s, 1.5 * s, (0.38, 0.38, 0.58, 0.4))
     ty += 8 * s
-    r.draw_text("[D] destroy enemy   [R] respawn",
-                tx, ty, color=(0.5, 0.5, 0.68, 0.75), size=int(12 * s))
+    _text(r, "[D] destroy enemy   [R] respawn",
+          tx, ty, color=(0.5, 0.5, 0.68, 0.75), fs=max(int(12 * s), 9))
 
     _draw_scene_badge(r, "gameplay", total, lw, lh, s)
 
@@ -385,24 +373,22 @@ def _draw_options(r: Renderer, graph: SceneGraph, frame: int,
                   lw: float, lh: float, s: float, selected_opt: int) -> None:
     cx, cy = lw * 0.5, lh * 0.5
 
-    r.draw_text("OPTIONS",
-                cx, cy - 130 * s,
-                color=(0.9, 0.9, 1.0, 1.0), size=int(44 * s), align="center")
+    _text_c(r, "OPTIONS", cx, cy - 130 * s,
+            color=(0.9, 0.9, 1.0, 1.0), fs=max(int(44 * s), 14))
 
     mock_labels = ["Volume", "Resolution", "Fullscreen"]
-    mock_values = ["80%", "1920 × 1080", "ON"]
+    mock_values = ["80%", "1920 x 1080", "ON"]
     actors = sorted(query_actors(graph, scene_id="options", tags={"menu_item"}),
                     key=lambda a: a.actor_id)
 
     for i, actor in enumerate(actors):
-        tf = get_component(graph, actor.actor_id, "transform")
-        if tf is None:
-            continue
+        # Compute position from lh directly (not from transform, which may be stale)
+        iy = lh * (0.38 + i * 0.14)
         is_sel = (i == selected_opt)
         glow = 0.45 + 0.55 * abs(math.sin(frame * 0.07)) if is_sel else 0.0
         row_h = 44 * s
         bx = cx - 200 * s
-        by = tf.y - row_h * 0.5
+        by = iy - row_h * 0.5
         if is_sel:
             r.draw_rect(bx - 10 * s, by, 420 * s, row_h,
                         (0.28, 0.13, 0.5, 0.32 + glow * 0.12))
@@ -410,16 +396,15 @@ def _draw_options(r: Renderer, graph: SceneGraph, frame: int,
 
         lc = (1.0, 0.9, 1.0, 1.0) if is_sel else (0.65, 0.65, 0.82, 0.88)
         vc = (0.85, 0.65, 1.0, 1.0) if is_sel else (0.5, 0.5, 0.72, 0.75)
-        r.draw_text(mock_labels[i], bx + 14 * s, tf.y - 9 * s,
-                    color=lc, size=int(20 * s))
-        r.draw_text(mock_values[i], cx + 200 * s, tf.y - 9 * s,
-                    color=vc, size=int(20 * s), align="right")
+        fs = max(int(20 * s), 10)
+        _text(r, mock_labels[i], bx + 14 * s, iy - 9 * s, color=lc, fs=fs)
+        _text_r(r, mock_values[i], cx + 200 * s, iy - 9 * s, color=vc, fs=fs)
 
     total = len(query_actors(graph, scene_id="options"))
     _draw_scene_badge(r, "options", total, lw, lh, s)
-    r.draw_text("↑ ↓  select   ←  back",
-                cx, lh - 38 * s,
-                color=(0.5, 0.5, 0.65, 0.72), size=int(16 * s), align="center")
+    _text_c(r, "up/down  select     left arrow  back",
+            cx, lh - 38 * s,
+            color=(0.5, 0.5, 0.65, 0.72), fs=max(int(16 * s), 10))
 
 
 # ---------------------------------------------------------------------------
@@ -428,10 +413,10 @@ def _draw_options(r: Renderer, graph: SceneGraph, frame: int,
 
 def _draw_scene_badge(r: Renderer, scene_name: str, actor_count: int,
                       lw: float, lh: float, s: float) -> None:
-    r.draw_rect(8 * s, 8 * s, 222 * s, 28 * s, (0.06, 0.06, 0.13, 0.88))
-    r.draw_text(f"scene: {scene_name}  |  actors: {actor_count}",
-                16 * s, 14 * s,
-                color=(0.6, 0.6, 0.82, 0.88), size=int(14 * s))
+    r.draw_rect(8 * s, 8 * s, 230 * s, 28 * s, (0.06, 0.06, 0.13, 0.88))
+    _text(r, f"scene: {scene_name}  |  actors: {actor_count}",
+          16 * s, 14 * s,
+          color=(0.6, 0.6, 0.82, 0.88), fs=max(int(14 * s), 9))
 
 
 def _draw_nav_dots(r: Renderer, current_idx: int, total: int,
@@ -439,7 +424,7 @@ def _draw_nav_dots(r: Renderer, current_idx: int, total: int,
     dot_r = 5 * s
     spacing = 22 * s
     start_x = lw * 0.5 - (total - 1) * spacing * 0.5
-    by = lh - 18 * s
+    by = lh - 14 * s
     for i in range(total):
         x = start_x + i * spacing
         if i == current_idx:
@@ -449,9 +434,9 @@ def _draw_nav_dots(r: Renderer, current_idx: int, total: int,
 
 
 def _draw_nav_hints(r: Renderer, lw: float, lh: float, s: float) -> None:
-    r.draw_text("← →  change scene     ESC  quit",
-                lw * 0.5, lh - 34 * s,
-                color=(0.4, 0.4, 0.55, 0.65), size=int(14 * s), align="center")
+    _text_c(r, "left/right arrow  change scene     ESC  quit",
+            lw * 0.5, lh - 34 * s,
+            color=(0.4, 0.4, 0.55, 0.65), fs=max(int(14 * s), 9))
 
 
 # ---------------------------------------------------------------------------
@@ -487,18 +472,31 @@ AUTO_ADVANCE_FRAMES = 240
 
 def main() -> None:
     pygame.init()
-    info = pygame.display.Info()
+    pygame.font.init()
+
+    pygame.display.gl_set_attribute(pygame.GL_CONTEXT_MAJOR_VERSION, 3)
+    pygame.display.gl_set_attribute(pygame.GL_CONTEXT_MINOR_VERSION, 3)
+    pygame.display.gl_set_attribute(pygame.GL_CONTEXT_PROFILE_MASK,
+                                    pygame.GL_CONTEXT_PROFILE_CORE)
+    pygame.display.gl_set_attribute(pygame.GL_CONTEXT_FORWARD_COMPATIBLE_FLAG, True)
+
+    desk_sizes = pygame.display.get_desktop_sizes()
+    log_w, log_h = desk_sizes[0] if desk_sizes else (1280, 720)
     flags = pygame.OPENGL | pygame.DOUBLEBUF | pygame.RESIZABLE
-    pygame.display.set_mode((min(info.current_w, 1280), min(info.current_h, 720)), flags)
+    pygame.display.set_mode((log_w, log_h), flags)
     pygame.display.set_caption("Scene & Actor Demo — Grimoire 2D")
 
-    ctx = moderngl.create_context()
-    ctx.enable(moderngl.BLEND)
-    ctx.blend_func = moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA
+    draw_w, draw_h = get_drawable_size(log_w, log_h)
+    pixel_ratio_x = draw_w / log_w
+    pixel_ratio_y = draw_h / log_h
 
-    lw, lh = get_drawable_size(1280, 720)
+    ctx = moderngl.create_context()
+    renderer = Renderer(ctx, VirtualResolution(width=draw_w, height=draw_h,
+                                               integer_scaling=False))
+    renderer.handle_physical_resize(draw_w, draw_h)
+
+    lw, lh = float(draw_w), float(draw_h)
     s = lh / 720.0
-    renderer = Renderer(ctx, lw, lh)
 
     graph, ids = _build_graph(lw, lh)
     scene_idx = 0
@@ -512,9 +510,6 @@ def main() -> None:
         clock.tick(60)
         current = SCENE_ORDER[scene_idx]
 
-        # ------------------------------------------------------------------ #
-        # Events
-        # ------------------------------------------------------------------ #
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
@@ -536,7 +531,6 @@ def main() -> None:
                     graph = set_active_scene(graph, ids[current])
 
                 elif event.key == pygame.K_d and current == "gameplay":
-                    # Destroy one live enemy (lowest-index found)
                     for i in range(3):
                         if get_actor(graph, f"enemy_{i}") is not None:
                             graph = destroy_actor(graph, f"enemy_{i}")
@@ -552,34 +546,25 @@ def main() -> None:
                     selected_opt = (selected_opt + 1) % 3
 
             elif event.type == pygame.VIDEORESIZE:
-                lw, lh = get_drawable_size(event.w, event.h)
+                draw_w2 = round(event.w * pixel_ratio_x)
+                draw_h2 = round(event.h * pixel_ratio_y)
+                renderer.handle_physical_resize(draw_w2, draw_h2)
+                lw, lh = float(draw_w2), float(draw_h2)
                 s = lh / 720.0
-                renderer = Renderer(ctx, lw, lh)
-                graph, ids = _build_graph(lw, lh)
-                scene_frame = 0
 
-        # ------------------------------------------------------------------ #
-        # Splash auto-advance
-        # ------------------------------------------------------------------ #
         if current == "splash" and scene_frame >= AUTO_ADVANCE_FRAMES:
             scene_idx = 1
             scene_frame = 0
             current = SCENE_ORDER[scene_idx]
             graph = set_active_scene(graph, ids[current])
 
-        # ------------------------------------------------------------------ #
-        # Update transforms
-        # ------------------------------------------------------------------ #
         if current == "title":
             graph = _update_title_actors(graph, frame, lw, lh)
         elif current == "gameplay":
             graph = _update_gameplay_actors(graph, frame, lw, lh)
 
-        # ------------------------------------------------------------------ #
-        # Render
-        # ------------------------------------------------------------------ #
-        ctx.clear(0.055, 0.055, 0.09, 1.0)
-        renderer.begin_frame()
+        renderer.prepare_frame()
+        renderer.draw_rect(0, 0, lw, lh, (0.055, 0.055, 0.09, 1.0))
 
         if current == "splash":
             _draw_splash(renderer, scene_frame, lw, lh, s)
@@ -592,7 +577,6 @@ def main() -> None:
 
         _draw_nav_dots(renderer, scene_idx, len(SCENE_ORDER), lw, lh, s)
         _draw_nav_hints(renderer, lw, lh, s)
-        renderer.end_frame()
         pygame.display.flip()
 
         frame += 1
