@@ -157,7 +157,7 @@ def _panel(r: Renderer, x: float, y: float, w: float, h: float, title: str) -> f
     r.draw_rect(x, y, w, h, PANEL_BG)
     r.draw_rect(x, y, w, 22, HEADER_BG)
     r.draw_text(title, x + 6, y + 3, color=ACCENT, font_size=16)
-    r.draw_rect_border(x, y, w, h, (0.25, 0.30, 0.45, 1.0), thickness=1.0)
+    r.draw_rect_border(x, y, w, h, 1.0, (0.25, 0.30, 0.45, 1.0))
     return y + 24
 
 
@@ -310,7 +310,7 @@ def _draw_gamepad(
     from grimoire2d.logic.gamepad_ops import trigger_value
 
     r.draw_rect(x, y, w, h, PANEL_BG)
-    r.draw_rect_border(x, y, w, h, (0.25, 0.30, 0.45, 1.0), thickness=1.0)
+    r.draw_rect_border(x, y, w, h, 1.0, (0.25, 0.30, 0.45, 1.0))
 
     if not pad_state.connected:
         r.draw_rect(x, y, w, 22, (0.18, 0.12, 0.12, 1.0))
