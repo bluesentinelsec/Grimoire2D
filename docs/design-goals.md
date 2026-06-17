@@ -18,7 +18,7 @@ The guiding philosophy is **"the game is just data"**:
 
 The framework must feel immediate and productive at the call site (library API style with `init`/`update`/`render`/`quit` hooks, immediate-mode *feel*) while the internals can be as sophisticated as necessary for performance and correctness. Callers should never need to care about the underlying OpenGL or platform details for normal use.
 
-It must support both **code-first game development** and the creation of higher-level graphical tools (level editors, etc.) using the **same GUI toolkit and renderer**.
+It must support both **code-first game development** and the creation of higher-level graphical tools (level editors, etc.). Tooling uses a first-class external GUI library (Dear PyGui is the recommended choice) while the engine renderer powers game viewports and content preview where embedded.
 
 **North-star experiences:** High-fidelity, clean implementations of classic 2D action, platformer, and adventure games such as *Super Mario World*, *The Legend of Zelda: A Link to the Past*, *Contra 3*, plus Diablo-style ARPGs, and foundational titles (Pong, Asteroids, Pac-Man, Space Invaders, Pitfall, auto-scrollers, top-down adventures, etc.).
 
@@ -82,12 +82,10 @@ The core library (`pip install grimoire2d`) delivers the framework. The source r
   - Full-screen post-processing pipeline (bloom, CRT, vignette, custom user passes). Order is significant; easy extension points for caller shaders.
 - All lighting/fog/post effects must integrate cleanly with the batched renderer and camera and remain performant.
 
-### GUI / HUD Toolkit (Dual-Use — Games + Tools)
-- A competent GUI toolkit sufficient to build both in-game HUDs/menus *and* standalone professional tools (e.g. a Trenchbroom-like level editor).
-- Graphical tools built with Grimoire2D are conceptually video games that happen to use the same renderer, input system, middleware, etc.
-- Widget coverage must include (at minimum): buttons, labels, panels, sliders, text fields, scroll views, menus, dialogs, lists, in-game HUD primitives, layout systems, focus management, theming/styling.
-- Theming: support for image-based skins or clean code-driven styling that enables professional polish.
-- GUI must integrate correctly with camera, input routing, scaling, and (where relevant) lighting/post effects.
+### In-Game HUDs and Professional Tooling
+- In-game HUDs, menus, and overlays are the responsibility of the game author. The engine supplies only low-level drawing primitives (rects, text, lines, sprites, pixel buffers) via the Renderer for simple immediate-mode HUDs and debug overlays.
+- Professional tooling (level editors, animation tools, inspectors, etc.) is built with a dedicated external GUI library. Dear PyGui is the recommended, supported choice for video game programming tools in this ecosystem. See `demos/editor_mockup.py` for the current reference implementation.
+- When a tool needs a live game/content preview it can render a Grimoire2D scene to an offscreen texture (using the public Renderer + moderngl context) and present the result inside the tool GUI. The engine itself does not own or ship widget set code.
 
 ### Rendering Internals
 - **Everything is OpenGL 3.30 core from day one.** No legacy software or immediate-mode fallback paths in the primary renderer.
@@ -122,7 +120,7 @@ The core library (`pip install grimoire2d`) delivers the framework. The source r
 - **Physics:** Stable, mature, performant 2D library (pymunk/Chipmunk strongly preferred due to ecosystem; evaluate pybox2d as alternative). No custom full physics engine.
 - **Math / Geometry:** Lightweight, fast primitives (own `g2d.math` module or a slim, mature dependency with minimal transitive deps). Avoid heavy scientific stacks.
 - **Audio:** pygame-ce mixer baseline + 2D spatial/positional support.
-- **GUI:** Built on the engine's own renderer and input. Hybrid or retained-mode as needed to support both games and editor-class tools. Theming required.
+- **GUI for tools:** Dear PyGui (external). The engine renderer and input are available for embedding game viewports inside tools but the core library does not implement widgets. In-game HUDs are drawn with engine primitives or game-specific code.
 - **Virtual Filesystem + Archives:** Custom VFS layer over zip, with optional simple obfuscation.
 - **Hot Reloading:** File watching + reload patterns for code, resources, and shaders (Godot-inspired).
 - **Packaging / Distribution:** PyInstaller (core requirement). The library must not make clean bundling difficult.
@@ -145,7 +143,7 @@ The core library (`pip install grimoire2d`) delivers the framework. The source r
 
 ### Layering (Must Be Visible and Useful)
 - High-level productive API (the Love2D-like surface most developers and tool authors use).
-- Mid-level subsystems (camera, VFS, scene/screen manager, lighting system, GUI framework, physics world, asset loaders, etc.).
+- Mid-level subsystems (camera, VFS, scene/screen manager, lighting system, physics world, asset loaders, etc.). Tooling GUIs live outside the core.
 - Low-level escape hatches (direct pygame-ce objects, GL context/buffers/shaders/programs, raw physics bodies, etc.).
 - Internals must support testing by keeping data model, rules/logic, and views/rendering clearly separated.
 
@@ -165,7 +163,7 @@ The core library (`pip install grimoire2d`) delivers the framework. The source r
 ### Performance & Quality Bar
 - 60 FPS is the common target; callers can configure a maximum FPS. Higher refresh rates (120/144) supported where the loop and vsync settings allow.
 - Target hardware: modern Windows, Linux, and macOS PCs. Must run well on Steam Deck (original hardware).
-- Example aspirational load (to be validated through implementation and profiling): hundreds to low thousands of lit, animated, normal-mapped sprites + multiple dynamic lights + particles + full GUI + physics at 1080p with headroom on target hardware.
+- Example aspirational load (to be validated through implementation and profiling): hundreds to low thousands of lit, animated, normal-mapped sprites + multiple dynamic lights + particles + physics at 1080p with headroom on target hardware. (Tool GUIs run in separate processes or as light overlays.)
 - Input must feel responsive.
 
 ---
@@ -198,7 +196,7 @@ Deliberately **not** building into the core (at least for the first 1–2 years)
 - Heavy runtime asset pipeline work (texture compression at runtime, automatic atlasing/packing tools, etc.). Asset preparation is a development-time or build-time concern for the game author.
 - Matchmaking, lobbies, relay servers, or any hosted multiplayer services. (Direct TCP/IP client/server netcode *is* required.)
 
-**Clarification on editors:** The core library will *not* ship a full "built-in" level editor or tilemap editor as part of the pip package. The GUI toolkit must be powerful enough that such tools *can be built* with the framework (and the source repo may contain demos or supplemental editor tools as examples). The framework itself remains a library, not an IDE or full authoring suite.
+**Clarification on editors:** The core library will *not* ship a full "built-in" level editor or tilemap editor as part of the pip package. The source repository contains demos (e.g. `demos/editor_mockup.py`) showing how to build professional editors using Dear PyGui + Grimoire2D content/viewport integration when desired. The framework itself remains a focused game runtime library.
 
 ---
 
@@ -220,9 +218,9 @@ The framework is "good enough" for its intended purpose when the author can impl
 - Adventure/ARPG: Top-down *Legend of Zelda: A Link to the Past*-style, *Diablo*-style.
 
 Additional success signals:
-- A full-featured level editor (or other non-trivial standalone tool) can be built using the same GUI toolkit + renderer + input stack that games use.
+- A full-featured level editor (or other non-trivial standalone tool) can be built using Dear PyGui for the interface and Grimoire2D (renderer + assets + input models) for game content preview and data.
 - Clean, professional PyInstaller distribution of a non-trivial game works reliably on Windows, macOS, and Linux.
-- Hot reload, dynamic lighting + fog + particles, physics, GUI, and multiplayer netcode can be used together in a single project without heroic workarounds.
+- Hot reload, dynamic lighting + fog + particles, physics, Dear PyGui-based tools, and multiplayer netcode can be used together in a project without heroic workarounds.
 - The codebase remains clean, architecturally sound (SOLID), and easy to modify after the above milestones.
 - The library installs via pip, games bundle via PyInstaller, and the full test suite passes under CI on all three platforms.
 
@@ -232,7 +230,7 @@ Additional success signals:
 
 - Exact physics library selection and the precise collision feature matrix (after evaluation spikes).
 - Concrete math implementation (own lightweight module vs. slim external dep).
-- GUI toolkit internals (retained vs. immediate vs. hybrid; exact theming model).
+- (removed) GUI is delegated to Dear PyGui for tools; engine drawing primitives are intentionally low-level.
 - Shader embedding format details and the initial set of default shaders.
 - Exact VFS obfuscation implementation (simple, reversible, well-documented cipher).
 - Performance / Steam Deck opt-in API surface and any associated modes or profiles.

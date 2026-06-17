@@ -31,7 +31,7 @@ If bugs are encountered, fix them, do not defer them.
 
 ### Layering (Visible and Enforced)
 1. **High-level**: The "Love2D-like" surface most users (and tool authors) touch (`g2d.run()`, `g2d.graphics.draw_sprite(...)`, simple config, scene manager). Immediate-mode *feel*.
-2. **Mid-level**: Subsystem managers (Camera, Batch, VFS, LightingSystem, GUIManager, PhysicsWorld, SceneStack, HotReloadCoordinator, etc.).
+2. **Mid-level**: Subsystem managers (Camera, Batch, VFS, LightingSystem, PhysicsWorld, SceneStack, HotReloadCoordinator, etc.). Tooling UI is provided by Dear PyGui (external, see demos/).
 3. **Low-level / Escape Hatches**: Raw pygame-ce surfaces/events (rare), GL objects (VAO/VBO/program via explicit path), pymunk bodies, etc. These must be obvious and not require fighting the framework.
 
 Internals **must** keep data model, business rules/logic, and rendering/views separated so tests can target the first two without a window/GL.
@@ -48,7 +48,7 @@ The Engine (core) owns/co-ordinates subsystems. Subsystems do **not** import the
 ### Rendering (Non-Negotiable)
 - **Day one and forever**: OpenGL 3.30 core profile only. No legacy paths, no `pygame.Surface.blit` in the hot path, no software fallbacks for primary content.
 - Batching is **mandatory** for performance. The public API must never expose the caller to "you must batch yourself".
-- All GL state changes, VAO/VBO/UBO/Texture binding, shader use, etc. are encapsulated inside `presentation/renderer.py` + `presentation/gl/` or equivalent. Other modules (GUI, particles, lighting, even debug overlays) **must** go through the batcher/renderer API.
+- All GL state changes, VAO/VBO/UBO/Texture binding, shader use, etc. are encapsulated inside `presentation/renderer.py` + `presentation/gl/` or equivalent. Other modules (particles, lighting, debug overlays, in-game HUD drawing) **must** go through the batcher/renderer API. Professional editor UIs live in separate processes using Dear PyGui and only cross into engine rendering for viewport previews via textures.
 - Shaders: First-class. Support both embedded strings (Raylib-style) and files. Compilation errors must be excellent. Hot reload must recompile and swap atomically where possible.
 - Lighting/fog/post: Designed as part of the pipeline from the beginning (not bolted on). Support arbitrary lights via culling + batching/GPU upload (no hard-coded light counts in shaders). GPU particles required.
 - Resolution independence: integer scaling + letterboxing is the model. Camera + viewport handled centrally.
@@ -77,7 +77,7 @@ If you ever feel the need to call `gl*` or `moderngl` directly from outside pres
 - Rendering code is the hardest to test — isolate the pure logic (culling, batch sorting, shader param calculation) and test that. Use integration tests + the classic game demos for the GL parts.
 
 ### Performance & Correctness
-- Hot paths (per-frame update/draw of thousands of sprites + lights + particles + GUI) must be designed for performance from the start. Measure, don't guess.
+- Hot paths (per-frame update/draw of thousands of sprites + lights + particles) must be designed for performance from the start. Measure, don't guess. (GUI for tools is not on the game hot path.)
 - Delegate to C where it matters (pygame-ce, OpenGL, pymunk).
 - No allocations in hot paths after init (where practical). Use object pools or pre-allocated buffers for particles, batches, etc. when it makes a difference.
 - Steam Deck (original) capability via opt-in performance modes/profiles. These are first-class, not afterthoughts.
@@ -94,7 +94,7 @@ If you ever feel the need to call `gl*` or `moderngl` directly from outside pres
 
 ### Hot Reload, Dev Ergonomics
 - Emulate Godot: edit Python, shader, texture, data → see change with minimal friction while the game is running.
-- The hot-reload coordinator must be a proper service that subsystems (graphics, assets, scene, gui, etc.) register with.
+- The hot-reload coordinator must be a proper service that subsystems (graphics, assets, scene, etc.) register with. Tool processes using Dear PyGui can opt into asset hot-reload via the same VFS mechanisms.
 - Code reload: module re-import with care for state (document the supported patterns; avoid complex global state that can't be reloaded).
 - Resource reload: transparent replacement of handles.
 
@@ -117,7 +117,7 @@ If you ever feel the need to call `gl*` or `moderngl` directly from outside pres
 - **Core / Loop**: Fixed/variable timestep options. Delta time everywhere for logic. Configurable max FPS. Proper pause. Runtime config changes (resolution, fullscreen, audio) must propagate correctly without leaks or lost state.
 - **Presentation/Renderer**: One canonical way to draw. Everything funnels through batch + current camera + current shader state managed by the renderer. Lighting and post are not "add-ons". (The top-level package for this is `presentation/`.)
 - **Assets/VFS**: The single source of truth. Loaders are thin adapters on top of VFS + format-specific parsing. Hot reload protocol is part of the contract for any reloadable resource.
-- **GUI**: Must be able to drive a full editor. Event routing, focus, layout, input integration, and drawing must all be correct and use the same graphics path. Theming is real (not a stub).
+- **GUI for tools**: Delegated to Dear PyGui (or equivalent mature external library). The engine does not implement or maintain widgets, focus systems, or layout engines for editors. In-game HUDs use the low-level Renderer drawing primitives. Tools that need live game previews integrate via texture export from the Renderer.
 - **Physics**: Thin wrapper. Do not re-implement broad/narrow phase. Provide debug draw that uses the graphics system. Bodies/queries exposed cleanly.
 - **Math**: Keep it small and fast. No numpy in the default path. Vec ops must be ergonomic (`v += other`, `v * 2`, etc.).
 - **Scene Management**: Stack-based with transitions. Common screens (options, loading) have easy patterns but are not forced on the user.

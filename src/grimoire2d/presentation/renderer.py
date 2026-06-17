@@ -723,8 +723,9 @@ class Renderer:
         so text automatically respects the same scaling + letterboxing as
         everything else.
 
-        This primitive is intended as a building block for higher-level GUI
-        (TK-like) and console systems.
+        This primitive is intended for debug overlays, simple HUD elements,
+        and custom immediate drawing inside games. Professional tooling GUIs
+        are built with an external library such as Dear PyGui (see demos/).
         """
         if not text:
             return
@@ -764,8 +765,7 @@ class Renderer:
     ) -> tuple[float, float]:
         """Return the (width, height) in virtual units the text would occupy.
 
-        Useful for layout helpers when building GUI or console systems on top
-        of this primitive.
+        Useful for layout helpers, debug labels, and simple HUD text.
         """
         if not text:
             return 0.0, 0.0

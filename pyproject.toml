@@ -13,5 +13,10 @@ dependencies = [
     "moderngl>=5.10.0",
 ]
 
+[project.optional-dependencies]
+tools = [
+    "dearpygui>=2.0.0",
+]
+
 [tool.setuptools.packages.find]
 where = ["src"]
