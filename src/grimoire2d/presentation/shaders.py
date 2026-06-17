@@ -8,7 +8,7 @@ the defaults.
 
 User games can do exactly the same for their custom shaders (define a
 triple-quoted string in their own Python code and pass it to the renderer)
-or load text via the future VFS for artist-editable .vert/.frag files.
+or load text via the VFS (grimoire2d.assets.vfs) for artist-editable .vert/.frag files.
 
 All shaders target OpenGL 3.30 core.
 """
