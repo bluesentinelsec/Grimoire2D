@@ -172,6 +172,7 @@ class GameWindow:
         ctx = moderngl.create_context()
         ctx.enable(moderngl.BLEND)
         ctx.blend_func = moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA
+        self._ctx = ctx
 
         self._virt_w = virtual_width
         self._virt_h = virtual_height
@@ -199,6 +200,25 @@ class GameWindow:
     def renderer(self) -> Renderer:
         """The Renderer for this window. Draw with it between begin_frame / end_frame."""
         return self._renderer
+
+    @property
+    def ctx(self) -> "moderngl.Context":
+        """Raw moderngl GL context — escape hatch for 3D renderer and custom GL work."""
+        return self._ctx
+
+    @property
+    def viewport(self):
+        """Letterboxed viewport rect (Viewport namedtuple from logic.scaling).
+
+        Use this to set up a 3D renderer's glViewport so 3D and 2D HUD share
+        the same on-screen region and maintain the same aspect ratio.
+        """
+        return self._renderer.viewport
+
+    @property
+    def physical_size(self) -> tuple[int, int]:
+        """Physical (drawable) window size in pixels, accounting for HiDPI."""
+        return self._renderer._phys  # type: ignore[attr-defined]
 
     @property
     def is_open(self) -> bool:
