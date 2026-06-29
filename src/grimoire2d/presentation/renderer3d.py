@@ -25,17 +25,25 @@ Phase 2 additions:
   - Shadow mapping (directional light, PCF 3×3)
   - draw_cylinder / draw_cone / draw_capsule — solid and wireframe
   - FreelookCamera wiring (camera is in camera3d.py; this file renders it)
+
+Phase 3 additions:
+  - load_mesh(path) -> GpuMesh3D  — OBJ + MTL loader, texture upload
+  - draw_mesh(mesh, ...)          — render a loaded mesh with full Phong + shadows
+  - Texture cache: the same image file is only uploaded to the GPU once
 """
 
 from __future__ import annotations
 
 import array
 import math
+from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import glm
 import moderngl
 
+from grimoire2d.assets.obj_loader import ObjMesh, SubMeshData, MtlMaterial, load_obj
 from grimoire2d.models.light3d import AmbientLight, DirectionalLight, PointLight
 from grimoire2d.models.render_settings_3d import RenderSettings3D
 from grimoire2d.presentation.shaders3d import (
@@ -50,7 +58,31 @@ if TYPE_CHECKING:
 
 
 # ---------------------------------------------------------------------------
-# Internal mesh container
+# GPU mesh types (OBJ-loaded meshes)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class _GpuSubMesh:
+    """One GPU draw call — geometry + material for a single OBJ submesh."""
+    vao_solid:  moderngl.VertexArray
+    vao_shadow: moderngl.VertexArray
+    texture:    moderngl.Texture | None   # None = use material color
+    color:      tuple[float, float, float, float]
+    shininess:  float
+
+
+class GpuMesh3D:
+    """GPU-resident OBJ mesh returned by ``Renderer3D.load_mesh()``.
+
+    Pass to ``Renderer3D.draw_mesh()`` each frame.  Do not construct directly.
+    """
+    def __init__(self, submeshes: list[_GpuSubMesh], name: str = "") -> None:
+        self.submeshes = submeshes
+        self.name      = name
+
+
+# ---------------------------------------------------------------------------
+# Internal primitive mesh container
 # ---------------------------------------------------------------------------
 
 class _GpuMesh:
@@ -508,6 +540,9 @@ class Renderer3D:
         self._in_shadow_pass = False
         self._last_viewport: "Viewport | None" = None
 
+        # Texture cache: resolved absolute path → moderngl.Texture
+        self._texture_cache: dict[Path, moderngl.Texture] = {}
+
     @property
     def shadow_map_size(self) -> int:
         """Physical pixel size of the shadow map (square). Derived from display at init."""
@@ -776,6 +811,106 @@ class Renderer3D:
             self._phong["u_color"].value       = color
             self._phong["u_use_texture"].value = False
             mesh.vao_solid.render(moderngl.TRIANGLES)
+
+    # ------------------------------------------------------------------
+    # OBJ mesh loading (Phase 3)
+    # ------------------------------------------------------------------
+
+    def _load_texture(self, path: Path) -> moderngl.Texture:
+        """Upload an image file to the GPU, returning a cached texture."""
+        if path in self._texture_cache:
+            return self._texture_cache[path]
+        import pygame
+        surf = pygame.image.load(str(path))
+        # Flip vertically: OBJ/PNG origin is top-left, OpenGL is bottom-left
+        surf = pygame.transform.flip(surf, False, True)
+        surf = surf.convert_alpha()
+        w, h = surf.get_size()
+        raw  = pygame.image.tobytes(surf, "RGBA")
+        tex  = self.ctx.texture((w, h), 4, raw)
+        tex.filter = (moderngl.LINEAR_MIPMAP_LINEAR, moderngl.LINEAR)
+        tex.build_mipmaps()
+        self._texture_cache[path] = tex
+        return tex
+
+    def load_mesh(self, path: str | Path) -> GpuMesh3D:
+        """Parse an OBJ file and upload its geometry + textures to the GPU.
+
+        Returns a ``GpuMesh3D`` that can be passed to ``draw_mesh()`` each frame.
+        The texture cache ensures each image is uploaded only once.
+        """
+        obj  = load_obj(path)
+        subs: list[_GpuSubMesh] = []
+
+        for sub in obj.submeshes:
+            vbo_bytes = sub.vertices.tobytes()
+            ibo_bytes = sub.indices.tobytes()
+            vbo = self.ctx.buffer(vbo_bytes)
+            ibo = self.ctx.buffer(ibo_bytes)
+
+            vao_solid = self.ctx.vertex_array(
+                self._phong,
+                [(vbo, "3f 3f 2f", "in_pos", "in_normal", "in_uv")],
+                index_buffer=ibo,
+            )
+            vao_shadow = self.ctx.vertex_array(
+                self._shadow,
+                [(vbo, "3f 20x", "in_pos")],
+                index_buffer=ibo,
+            )
+
+            tex: moderngl.Texture | None = None
+            if sub.material.diffuse_map and sub.material.diffuse_map.exists():
+                tex = self._load_texture(sub.material.diffuse_map)
+
+            mat = sub.material
+            color = (*mat.diffuse, mat.alpha)
+            subs.append(_GpuSubMesh(
+                vao_solid  = vao_solid,
+                vao_shadow = vao_shadow,
+                texture    = tex,
+                color      = color,
+                shininess  = mat.shininess,
+            ))
+
+        return GpuMesh3D(subs, name=obj.name)
+
+    def draw_mesh(
+        self,
+        mesh: GpuMesh3D,
+        position: tuple[float, float, float] = (0.0, 0.0, 0.0),
+        rotation: glm.mat4 | None = None,
+        scale: float | tuple[float, float, float] = 1.0,
+    ) -> None:
+        """Render a loaded OBJ mesh with full Phong shading and shadow support."""
+        model = glm.translate(glm.mat4(1.0), glm.vec3(*position))
+        if rotation is not None:
+            model = model * rotation
+        if isinstance(scale, (int, float)):
+            model = glm.scale(model, glm.vec3(float(scale)))
+        else:
+            model = glm.scale(model, glm.vec3(*scale))
+
+        for sub in mesh.submeshes:
+            if self._in_shadow_pass:
+                self._shadow["u_model"].value = _mat4(model)
+                sub.vao_shadow.render(moderngl.TRIANGLES)
+            else:
+                self._phong["u_model"].value       = _mat4(model)
+                self._phong["u_model_inv_t"].value  = _mat4_inv_t(model)
+                if sub.texture is not None:
+                    sub.texture.use(0)
+                    self._phong["u_use_texture"].value = True
+                    self._phong["u_color"].value       = (1.0, 1.0, 1.0, sub.color[3])
+                else:
+                    self._white_tex.use(0)
+                    self._phong["u_use_texture"].value = False
+                    self._phong["u_color"].value       = sub.color
+                sub.vao_solid.render(moderngl.TRIANGLES)
+        # Restore white fallback so subsequent non-mesh draw_* calls work correctly
+        if not self._in_shadow_pass:
+            self._white_tex.use(0)
+            self._phong["u_use_texture"].value = False
 
     def _get_mesh(self, key: str) -> _GpuMesh:
         if key not in self._meshes:

@@ -1,0 +1,8 @@
+# uv_cube.mtl — material for uv_cube.obj
+newmtl checker
+Ka 0.1 0.1 0.1
+Kd 1.0 1.0 1.0
+Ks 0.3 0.3 0.3
+Ns 32.0
+d 1.0
+map_Kd checker.png
