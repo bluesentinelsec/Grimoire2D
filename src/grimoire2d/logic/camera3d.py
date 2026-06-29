@@ -101,9 +101,9 @@ class FreelookCamera(PerspectiveCamera):
     def move(self, keys_held: set[int], dt: float) -> None:
         """Translate camera based on held key set. Call once per physics step.
 
-        ``keys_held`` is a set of pygame key constants (e.g. pygame.K_w).
-        Movement is relative to the camera's look direction projected onto
-        the XZ plane (no vertical drift from pitch).
+        ``keys_held`` is a set of pygame key constants.
+        WASD moves on the XZ plane (no vertical drift from pitch);
+        Q rises and E descends along world-Y.
         """
         import pygame
 
@@ -120,9 +120,9 @@ class FreelookCamera(PerspectiveCamera):
             vel -= right
         if pygame.K_d in keys_held:
             vel += right
-        if pygame.K_SPACE in keys_held:
+        if pygame.K_q in keys_held:
             vel += up
-        if pygame.K_LSHIFT in keys_held or pygame.K_LCTRL in keys_held:
+        if pygame.K_e in keys_held:
             vel -= up
 
         if glm.length(vel) > 0.001:
