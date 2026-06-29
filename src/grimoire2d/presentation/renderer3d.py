@@ -64,13 +64,13 @@ class _GpuMesh:
             index_buffer=ibo_s,
         )
 
-        # Wireframe VAO (separate vertex buffer with only corner positions)
+        # Wireframe VAO — positions only (wire shader declares only in_pos)
         if wire_verts is not None and wire_indices is not None:
             vbo_w = ctx.buffer(array.array("f", wire_verts).tobytes())
             ibo_w = ctx.buffer(array.array("I", wire_indices).tobytes())
             self.vao_wire: moderngl.VertexArray | None = ctx.vertex_array(
                 wire_prog,
-                [(vbo_w, "3f 3f 2f", "in_pos", "in_normal", "in_uv")],
+                [(vbo_w, "3f", "in_pos")],
                 index_buffer=ibo_w,
             )
         else:
@@ -105,12 +105,11 @@ def _build_box_solid() -> tuple[list[float], list[int]]:
 
 
 def _build_box_wire() -> tuple[list[float], list[int]]:
-    """8-corner wireframe box. Dummy normals/UVs so vertex layout matches."""
+    """8-corner wireframe box. Positions only — wire shader has no normal/uv."""
     h = 0.5
-    n, u = [0, 1, 0], [0, 0]  # dummy
     corners = [
-        [-h,-h,-h]+n+u, [ h,-h,-h]+n+u, [ h, h,-h]+n+u, [-h, h,-h]+n+u,
-        [-h,-h, h]+n+u, [ h,-h, h]+n+u, [ h, h, h]+n+u, [-h, h, h]+n+u,
+        [-h,-h,-h], [ h,-h,-h], [ h, h,-h], [-h, h,-h],
+        [-h,-h, h], [ h,-h, h], [ h, h, h], [-h, h, h],
     ]
     verts = [v for c in corners for v in c]
     lines = [
@@ -150,22 +149,20 @@ def _build_sphere_solid(stacks: int = 24, slices: int = 24) -> tuple[list[float]
     return verts, indices
 
 
-def _build_sphere_wire(rings: int = 3, segments: int = 64) -> tuple[list[float], list[int]]:
-    """Three great circles (equator + two meridians)."""
-    n_dummy = [0.0, 1.0, 0.0]
-    uv_dummy = [0.0, 0.0]
+def _build_sphere_wire(segments: int = 64) -> tuple[list[float], list[int]]:
+    """Three great circles (equator + two meridians). Positions only."""
     verts: list[float] = []
     lines: list[int] = []
 
     axes = [(0, 2), (0, 1), (1, 2)]  # XZ, XY, YZ planes
     for ax1, ax2 in axes:
-        base = len(verts) // 8
+        base = len(verts) // 3
         for i in range(segments):
             theta = 2.0 * math.pi * i / segments
             p = [0.0, 0.0, 0.0]
             p[ax1] = math.cos(theta)
             p[ax2] = math.sin(theta)
-            verts += p + n_dummy + uv_dummy
+            verts += p
         for i in range(segments):
             lines += [base + i, base + (i + 1) % segments]
 
@@ -230,8 +227,13 @@ class Renderer3D:
 
         self._meshes: dict[str, _GpuMesh] = {}
 
-        # Defaults written to phong uniforms in begin_scene
+        # 1×1 opaque white fallback bound to unit 0 so the sampler is never
+        # empty when u_use_texture=False (avoids a macOS GL driver warning).
+        self._white_tex = ctx.texture((1, 1), 4, b"\xff\xff\xff\xff")
+        self._white_tex.use(0)
+
         self._phong["u_use_texture"].value = False
+        self._phong["u_albedo"].value = 0
         self._phong["u_color"].value = (1.0, 1.0, 1.0, 1.0)
 
     # ------------------------------------------------------------------
