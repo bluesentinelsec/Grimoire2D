@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import array
 import math
-import struct
 from typing import TYPE_CHECKING
 
 import glm
@@ -187,8 +186,12 @@ def _build_plane_solid() -> tuple[list[float], list[int]]:
 # ---------------------------------------------------------------------------
 
 def _mat4(m: glm.mat4) -> tuple:
-    """Flat 16-float tuple (column-major) for moderngl mat4 uniform."""
-    return struct.unpack("16f", bytes(m))
+    """Flat 16-float tuple in column-major order for a moderngl mat4 uniform.
+
+    PyGLM's bytes() outputs row-major data; moderngl uploads with GL_FALSE
+    (column-major). Extracting via m[col][row] gives the correct layout.
+    """
+    return tuple(m[col][row] for col in range(4) for row in range(4))
 
 
 def _mat4_inv_t(m: glm.mat4) -> tuple:
