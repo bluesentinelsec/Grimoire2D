@@ -3,15 +3,20 @@
 All shaders target GLSL 3.30 core (matching the OpenGL 3.30 core profile
 required throughout Grimoire2D).
 
-Three programs are provided:
+Programs:
 
-PHONG  — full Phong lighting with runtime effect toggles (specular, fog,
-         shadows).  Used for solid primitive and mesh rendering.
+PHONG  — full Phong lighting: ambient + directional + up to 8 point lights
+         + up to 4 spot lights, with optional specular, fog, shadow mapping,
+         and texture sampling.
 
-WIRE   — single solid color, no lighting.  Used for wireframe draw calls.
+WIRE   — single solid color, no lighting.  Wireframe draw calls.
 
-SHADOW — depth-only pass from the directional light's point of view.
-         Produces the shadow map consumed by PHONG.
+SHADOW — depth-only pass from the directional light's POV (shadow map).
+
+SKY    — procedural gradient sky rendered before scene geometry.
+         Covers the screen via a single covering triangle (gl_VertexID);
+         reconstructs world-space ray directions from the inverse VP matrices
+         to blend zenith / horizon / ground colours.
 """
 
 # ---------------------------------------------------------------------------
@@ -73,11 +78,24 @@ uniform vec3  u_dir_light_dir;    // direction light *travels* (toward surfaces)
 uniform vec3  u_dir_light_color;
 
 // Point lights — parallel arrays, max 8
+// Array uniforms must be uploaded to the base name (not "u_pl_pos[0]") on
+// macOS/Metal.  The `if (i < count)` guard (not `break`) keeps all slots
+// nominally reachable so the driver does not prune them at link time.
 uniform int   u_num_point_lights;
 uniform vec3  u_pl_pos[8];
 uniform vec3  u_pl_color[8];
 uniform float u_pl_radius[8];
 uniform float u_pl_intensity[8];
+
+// Spot lights — parallel arrays, max 4
+uniform int   u_num_spot_lights;
+uniform vec3  u_sl_pos[4];
+uniform vec3  u_sl_dir[4];        // direction cone points (world space)
+uniform vec3  u_sl_color[4];
+uniform float u_sl_intensity[4];
+uniform float u_sl_radius[4];
+uniform float u_sl_inner_cos[4];  // cos(inner_angle) — full brightness inside
+uniform float u_sl_outer_cos[4];  // cos(outer_angle) — zero brightness outside
 
 // Runtime effect toggles
 uniform bool  u_specular_on;
@@ -128,7 +146,7 @@ void main() {
 
     vec3 light_acc = u_ambient_color;
 
-    // Directional light — shadow only attenuates this term, not point lights
+    // Directional light — shadow only attenuates this term
     if (u_dir_light_on) {
         vec3  L      = normalize(-u_dir_light_dir);
         float NdL    = max(dot(N, L), 0.0);
@@ -138,10 +156,7 @@ void main() {
             light_acc += shadow * u_dir_light_color * spec_blinn(N, L, V, 64.0) * 0.35;
     }
 
-    // Point lights — static upper bound (8), guard with `if` (not `break`) so
-    // the compiler sees all 8 array slots as live at link time.  On macOS/Metal
-    // a `break` allows the driver to prove upper slots dead and prune them from
-    // the registered uniform list; `if` keeps every slot nominally reachable.
+    // Point lights
     for (int i = 0; i < 8; i++) {
         if (i < u_num_point_lights) {
             vec3  to_light = u_pl_pos[i] - v_world_pos;
@@ -153,6 +168,28 @@ void main() {
             light_acc += u_pl_color[i] * u_pl_intensity[i] * NdL * atten;
             if (u_specular_on)
                 light_acc += u_pl_color[i] * spec_blinn(N, L, V, 128.0) * atten * 0.5;
+        }
+    }
+
+    // Spot lights — cone falloff with smooth inner/outer transition
+    for (int i = 0; i < 4; i++) {
+        if (i < u_num_spot_lights) {
+            vec3  to_light  = u_sl_pos[i] - v_world_pos;
+            float dist      = length(to_light);
+            if (dist < u_sl_radius[i]) {
+                vec3  L         = normalize(to_light);
+                float cos_theta = dot(-L, normalize(u_sl_dir[i]));
+                float cone = smoothstep(u_sl_outer_cos[i], u_sl_inner_cos[i], cos_theta);
+                if (cone > 0.0) {
+                    float atten = clamp(1.0 - dist / u_sl_radius[i], 0.0, 1.0);
+                    atten       = atten * atten;
+                    float NdL   = max(dot(N, L), 0.0);
+                    light_acc  += u_sl_color[i] * u_sl_intensity[i] * NdL * atten * cone;
+                    if (u_specular_on)
+                        light_acc += u_sl_color[i] * u_sl_intensity[i]
+                                   * spec_blinn(N, L, V, 64.0) * atten * cone * 0.5;
+                }
+            }
         }
     }
 
@@ -222,4 +259,60 @@ void main() {
 SHADOW_FRAG = """
 #version 330 core
 void main() {}
+"""
+
+# ---------------------------------------------------------------------------
+# Sky — procedural gradient, rendered before scene geometry
+# ---------------------------------------------------------------------------
+
+SKY_VERT = """
+#version 330 core
+
+out vec2 v_ndc;
+
+void main() {
+    // Emit a large triangle that covers the entire NDC space without any VBO.
+    // gl_VertexID selects from three hardcoded positions:
+    //   0 → (-1, -1)    1 → (3, -1)    2 → (-1, 3)
+    vec2 pos = vec2(
+        float((gl_VertexID & 1) * 2) * 2.0 - 1.0,
+        float((gl_VertexID >> 1) * 2) * 2.0 - 1.0
+    );
+    v_ndc       = pos;
+    gl_Position = vec4(pos, 0.9999, 1.0);
+}
+"""
+
+SKY_FRAG = """
+#version 330 core
+
+in vec2 v_ndc;
+
+uniform mat4 u_inv_proj;
+uniform mat4 u_inv_view;
+uniform vec3 u_sky_zenith;
+uniform vec3 u_sky_horizon;
+uniform vec3 u_sky_ground;
+
+out vec4 frag_color;
+
+void main() {
+    // Unproject NDC → view-space direction → world-space direction
+    vec4 clip     = vec4(v_ndc, -1.0, 1.0);
+    vec4 view_dir = u_inv_proj * clip;
+    view_dir      = vec4(view_dir.xy, -1.0, 0.0);   // treat as direction
+    vec3 world    = normalize((u_inv_view * view_dir).xyz);
+
+    // world.y: +1 = straight up (zenith), 0 = horizon, -1 = straight down
+    float t = clamp(world.y, -1.0, 1.0);
+    vec3 color;
+    if (t >= 0.0) {
+        // horizon → zenith: gentle power curve for more sky blue at top
+        color = mix(u_sky_horizon, u_sky_zenith, pow(t, 0.6));
+    } else {
+        // horizon → ground: linear, compressed to bottom quarter of view
+        color = mix(u_sky_horizon, u_sky_ground, clamp(-t * 3.0, 0.0, 1.0));
+    }
+    frag_color = vec4(color, 1.0);
+}
 """
