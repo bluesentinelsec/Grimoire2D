@@ -3,13 +3,13 @@
 Proves:
   4a  draw_quad / draw_rect3d — arbitrary planar geometry (walls, floor, ceiling)
   4b  SkyGradient — procedural zenith/horizon/ground sky, visible through the window
-  4c  SpotLight — 2 ceiling fixtures inside + flashlight; plus 24 point lights
-      demonstrating CPU culling: only 8 are uploaded to the GPU each frame
+  4c  SpotLight — 2 ceiling fixtures + flashlight; 12 animated point lights that
+      independently cycle hue and pulse radius over time
   4d  CollisionWorld + move_and_slide — player walks the room, can't pass through
       walls, stands on the floor, bumps the ceiling
 
 Scene: a corridor + open side room.  One wall has a window gap; the sky
-is visible through it.  Point lights are placed along the ceiling.
+is visible through it.  Point lights are placed along the ceiling and floor.
 
 Controls:
   Mouse               look (click to capture)
@@ -139,51 +139,96 @@ def build_collision_world() -> CollisionWorld:
 
 
 # ---------------------------------------------------------------------------
-# Build lights: 24 point lights + 2 ceiling spots
+# Animated point lights
 # ---------------------------------------------------------------------------
 
-def build_lights():
-    point_lights: list[PointLight] = []
-    # Corridor ceiling grid: 4 columns × 4 rows
-    for col, x in enumerate([4.0, 8.0, 12.0, 16.0]):
-        for row, z in enumerate([4.0, 10.0, 16.0, 24.0]):
-            hue_idx = (col + row) % 6
-            colors = [
-                (1.0, 0.92, 0.78),  # warm white
-                (0.78, 0.90, 1.00),  # cool blue
-                (1.00, 0.78, 0.65),  # orange
-                (0.85, 1.00, 0.85),  # green tint
-                (0.95, 0.82, 1.00),  # lavender
-                (1.00, 0.85, 0.70),  # amber
-            ]
-            point_lights.append(PointLight(
-                position=(x, CEIL_Y - 0.3, z),
-                color=colors[hue_idx],
-                intensity=2.5,
-                radius=9.0,
+from dataclasses import dataclass as _dc
+
+@_dc
+class _LightAnim:
+    """Static position + animation parameters for one modulating point light."""
+    position:    tuple[float, float, float]
+    intensity:   float
+    radius:      float
+    hue_offset:  float   # starting hue in radians
+    hue_speed:   float   # hue drift speed, radians / second
+    pulse_speed: float   # radius / intensity pulse speed, radians / second
+    pulse_depth: float   # fraction of base radius that pulses (0 = static)
+
+
+def _hue_rgb(h: float) -> tuple[float, float, float]:
+    """Map a hue angle to a smooth RGB color wheel value."""
+    TWO_PI_3 = 2.0943951
+    r = 0.55 + 0.45 * math.cos(h)
+    g = 0.55 + 0.45 * math.cos(h + TWO_PI_3)
+    b = 0.55 + 0.45 * math.cos(h + 2 * TWO_PI_3)
+    return (max(0.0, r), max(0.0, g), max(0.0, b))
+
+
+def animate_point_lights(anims: list[_LightAnim], t: float) -> list[PointLight]:
+    """Compute current PointLight state for all animated lights at time t."""
+    lights = []
+    for a in anims:
+        color  = _hue_rgb(a.hue_offset + a.hue_speed * t)
+        pulse  = 1.0 + a.pulse_depth * math.sin(a.pulse_speed * t + a.hue_offset)
+        lights.append(PointLight(
+            position  = a.position,
+            color     = color,
+            intensity = a.intensity * pulse,
+            radius    = a.radius    * pulse,
+        ))
+    return lights
+
+
+def build_light_anims() -> list[_LightAnim]:
+    """Define 12 animated point lights: 8 corridor ceiling + 2 side room + 2 floor."""
+    PI = math.pi
+    anims: list[_LightAnim] = []
+
+    # Corridor ceiling: two rails (x=5, x=15) × four positions along Z
+    for rail_idx, x in enumerate([5.0, 15.0]):
+        for row_idx, z in enumerate([4.0, 11.0, 18.0, 25.0]):
+            anims.append(_LightAnim(
+                position    = (x, CEIL_Y - 0.3, z),
+                intensity   = 3.0,
+                radius      = 11.0,
+                hue_offset  = (rail_idx * PI) + (row_idx * PI / 2.5),
+                hue_speed   = 0.18 + rail_idx * 0.07 + row_idx * 0.03,
+                pulse_speed = 0.9  + row_idx  * 0.25,
+                pulse_depth = 0.18,
             ))
-    # Side room: 4 extra point lights
-    for x, z in [(ROOM_W + 3, 3), (ROOM_W + 9, 3), (ROOM_W + 3, 11), (ROOM_W + 9, 11)]:
-        point_lights.append(PointLight(
-            position=(x, CEIL_Y - 0.3, z),
-            color=(0.90, 0.85, 1.0),
-            intensity=2.0,
-            radius=8.0,
-        ))
-    # Decorative floor accent lights: 4 more
-    for x, z in [(2, 2), (18, 2), (2, 26), (18, 26)]:
-        point_lights.append(PointLight(
-            position=(x, 0.15, z),
-            color=(0.60, 0.80, 1.00),
-            intensity=1.5,
-            radius=4.0,
+
+    # Side room ceiling: two lights
+    for idx, (x, z) in enumerate([(ROOM_W + 4, 4), (ROOM_W + 8, 10)]):
+        anims.append(_LightAnim(
+            position    = (x, CEIL_Y - 0.3, z),
+            intensity   = 2.5,
+            radius      = 9.0,
+            hue_offset  = PI * 1.3 + idx * PI * 0.7,
+            hue_speed   = 0.12 + idx * 0.09,
+            pulse_speed = 1.1  + idx * 0.3,
+            pulse_depth = 0.22,
         ))
 
-    # Total: 16 + 4 + 4 = 24 point lights
-    assert len(point_lights) == 24, f"Expected 24, got {len(point_lights)}"
+    # Floor accent lights: two moody pools near the entrance
+    for idx, (x, z) in enumerate([(2.5, 3.0), (17.5, 3.0)]):
+        anims.append(_LightAnim(
+            position    = (x, 0.15, z),
+            intensity   = 2.0,
+            radius      = 5.0,
+            hue_offset  = PI * 0.5 + idx * PI,
+            hue_speed   = 0.22 + idx * 0.11,
+            pulse_speed = 1.6  + idx * 0.4,
+            pulse_depth = 0.30,
+        ))
 
-    # 2 ceiling spot lights (downward-pointing fixtures)
-    spot_lights = [
+    assert len(anims) == 12, f"Expected 12, got {len(anims)}"
+    return anims
+
+
+def build_spot_lights() -> list[SpotLight]:
+    """Two static ceiling spot fixtures."""
+    return [
         SpotLight(position=(5.0,  CEIL_Y - 0.05, 6.0),  direction=(0, -1, 0),
                   color=(1.0, 0.95, 0.80), intensity=6.0, radius=7.0,
                   inner_angle=12.0, outer_angle=25.0),
@@ -191,7 +236,6 @@ def build_lights():
                   color=(0.90, 0.95, 1.00), intensity=6.0, radius=7.0,
                   inner_angle=12.0, outer_angle=25.0),
     ]
-    return point_lights, spot_lights
 
 
 # ---------------------------------------------------------------------------
@@ -272,8 +316,9 @@ def run() -> None:
     r3d = Renderer3D(win.ctx, settings)
     ts  = FixedTimestep(physics_hz=PHYSICS_HZ, max_dt=settings.max_dt)
 
-    col_world = build_collision_world()
-    all_point_lights, ceiling_spots = build_lights()
+    col_world    = build_collision_world()
+    light_anims  = build_light_anims()
+    ceiling_spots = build_spot_lights()
 
     camera = FreelookCamera(position=(ROOM_W / 2, EYE_HEIGHT, 3.0),
                              yaw=90.0, pitch=-8.0, fov=85.0,
@@ -389,7 +434,8 @@ def run() -> None:
                                         foot_pos[1] + EYE_HEIGHT,
                                         foot_pos[2])
 
-        # Build spot light list for this frame
+        # Animate point lights and build spot light list for this frame
+        all_point_lights = animate_point_lights(light_anims, anim_time)
         spot_lights = list(ceiling_spots)
         if flashlight_on:
             spot_lights.append(make_flashlight())
@@ -448,7 +494,7 @@ def run() -> None:
         r.draw_text(
             f"Cam ({pos.x:+.1f}, {pos.y:+.1f}, {pos.z:+.1f})  "
             f"vy={vy:+.1f}  |  "
-            f"Point lights: {active_pl}/{total_pl} rendered  "
+            f"Point lights: {active_pl}/{total_pl} (animated)  "
             f"Spot lights: {active_sl}/{total_sl}",
             VW - 980, 8, font_size=18, color=(0.6, 0.70, 0.85, 1.0),
         )
