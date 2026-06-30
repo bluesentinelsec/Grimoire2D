@@ -404,6 +404,7 @@ def run() -> None:
         # Color pass
         r3d.begin_scene(
             camera, win.viewport,
+            dt=dt,
             sky=SKY,
             ambient=ambient,
             dir_light=sun,
@@ -447,9 +448,9 @@ def run() -> None:
         r.draw_text(
             f"Cam ({pos.x:+.1f}, {pos.y:+.1f}, {pos.z:+.1f})  "
             f"vy={vy:+.1f}  |  "
-            f"Point lights: {active_pl}/{total_pl} active (GPU cap 8)  "
+            f"Point lights: {active_pl}/{total_pl} rendered (fade culling)  "
             f"Spot lights: {active_sl}/{total_sl}",
-            VW - 860, 8, font_size=18, color=(0.6, 0.70, 0.85, 1.0),
+            VW - 980, 8, font_size=18, color=(0.6, 0.70, 0.85, 1.0),
         )
 
         if not mouse_captured:

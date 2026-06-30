@@ -35,6 +35,7 @@ Phase 3 additions:
 from __future__ import annotations
 
 import array
+import dataclasses
 import math
 from dataclasses import dataclass
 from pathlib import Path
@@ -490,27 +491,85 @@ def _set(prog: moderngl.Program, key: str, value) -> None:
         pass
 
 
-def _cull_lights(lights: list, cam_pos: glm.vec3, max_n: int) -> list:
-    """Return up to ``max_n`` lights ranked by influence at ``cam_pos``.
+class LightCuller:
+    """Stateful per-light fade weights to eliminate pop-in/out during culling.
 
-    Lights whose radius doesn't reach the camera score zero and are excluded
-    first.  Among the rest, score = intensity × (1 − dist/radius)²  mirrors
-    the quadratic attenuation used in the shader, so the lights that actually
-    brighten the scene around the camera are always kept.
+    Each frame, lights are scored by their influence at the camera.  The top
+    *max_n* form the desired active set.  A light entering the set ramps its
+    effective intensity from 0 to full over ~0.12 s; a light leaving ramps to
+    0 over ~0.33 s.  Both fading-in and fading-out lights occupy GPU slots,
+    so no hard pop is ever visible.
 
-    When len(lights) <= max_n, all lights are returned without sorting.
+    Lights are identified by their ``position`` tuple, which is stable for
+    static fixtures.  Dynamic lights (e.g. a per-frame flashlight) simply
+    start at weight 0 and ramp up — any stale entry for the previous position
+    fades out normally.
+
+    When the total number of lights is within the GPU cap, all lights are
+    returned at full intensity without any state tracking.
     """
-    if len(lights) <= max_n:
-        return lights
 
-    def _score(light) -> float:
+    FADE_IN_RATE  = 8.0   # weight gained per second (0 → 1 in ~0.12 s)
+    FADE_OUT_RATE = 3.0   # weight lost  per second  (1 → 0 in ~0.33 s)
+
+    def __init__(self, max_n: int) -> None:
+        self._max_n = max_n
+        # position tuple → current fade weight in [0, 1]
+        self._weights: dict[tuple, float] = {}
+
+    @staticmethod
+    def _score(light, cam_pos: glm.vec3) -> float:
         px, py, pz = light.position
         d = math.sqrt((px - cam_pos.x)**2 + (py - cam_pos.y)**2 + (pz - cam_pos.z)**2)
         if d >= light.radius:
             return 0.0
         return light.intensity * (1.0 - d / light.radius) ** 2
 
-    return sorted(lights, key=_score, reverse=True)[:max_n]
+    def update(self, lights: list, cam_pos: glm.vec3, dt: float) -> list:
+        """Return up to max_n lights with intensity scaled by their fade weight."""
+        if not lights:
+            self._weights.clear()
+            return []
+
+        if len(lights) <= self._max_n:
+            return lights
+
+        # Score and rank all lights
+        scored_pairs = [(l, self._score(l, cam_pos)) for l in lights]
+        scored_pairs.sort(key=lambda x: x[1], reverse=True)
+        desired_keys = {tuple(l.position) for l, s in scored_pairs[:self._max_n] if s > 0.0}
+        light_by_key = {tuple(l.position): l for l in lights}
+
+        # Advance fade weights for already-tracked lights
+        for key in list(self._weights):
+            if key not in light_by_key:
+                del self._weights[key]
+                continue
+            if key in desired_keys:
+                self._weights[key] = min(1.0, self._weights[key] + self.FADE_IN_RATE * dt)
+            else:
+                self._weights[key] = max(0.0, self._weights[key] - self.FADE_OUT_RATE * dt)
+
+        # Admit newly desired lights not yet tracked
+        for key in desired_keys:
+            if key not in self._weights:
+                self._weights[key] = min(1.0, self.FADE_IN_RATE * dt)
+
+        # Purge fully-faded lights
+        self._weights = {k: w for k, w in self._weights.items() if w > 1e-4}
+
+        # Slot allocation: desired lights first, then fading-out sorted by weight
+        desired_slots = [(k, self._weights[k], light_by_key[k])
+                         for k in desired_keys if k in self._weights]
+        fading_slots  = [(k, self._weights[k], light_by_key[k])
+                         for k in self._weights
+                         if k not in desired_keys and k in light_by_key]
+        fading_slots.sort(key=lambda x: x[1], reverse=True)
+
+        result = []
+        for _key, w, light in (desired_slots + fading_slots)[:self._max_n]:
+            result.append(dataclasses.replace(light, intensity=light.intensity * w))
+        return result
 
 
 # ---------------------------------------------------------------------------
@@ -597,6 +656,10 @@ class Renderer3D:
         # Spot light zero-init so all slots are always populated
         self._phong["u_num_spot_lights"].value = 0
 
+        # Stateful light cullers — maintain per-light fade weights across frames
+        self._pl_culler = LightCuller(settings.max_point_lights if settings else 8)
+        self._sl_culler = LightCuller(4)  # spot light GPU cap is always 4
+
         # Texture cache: resolved absolute path → moderngl.Texture
         self._texture_cache: dict[Path, moderngl.Texture] = {}
 
@@ -658,6 +721,7 @@ class Renderer3D:
         camera: "PerspectiveCamera",
         viewport: "Viewport",
         *,
+        dt: float = 0.016,
         sky_color: tuple[float, float, float, float] = (0.05, 0.07, 0.15, 1.0),
         sky: SkyGradient | None = None,
         ambient: AmbientLight | None = None,
@@ -667,13 +731,16 @@ class Renderer3D:
     ) -> None:
         """Set GL state, clear the viewport, and upload per-frame uniforms.
 
+        ``dt`` — frame delta time in seconds, used to advance per-light fade
+        weights in the stateful light culler.  Pass ``win.begin_frame()`` here.
+
         ``sky`` — if a SkyGradient is provided it is rendered as a procedural
         background before scene geometry (depth writes off during sky pass).
         ``sky_color`` is used as the plain clear colour when ``sky`` is None.
 
-        Point lights and spot lights beyond the GPU cap (8 / 4) are CPU-culled:
-        the lights with the highest influence at the camera position are kept.
-        Total light counts (before culling) are available via
+        Lights beyond the GPU cap (8 point / 4 spot) are CPU-culled.  Lights
+        entering or leaving the active set fade in/out over ~0.1–0.3 s to
+        prevent visible pop-in/out.  Counts before culling are available via
         ``last_point_light_count`` / ``last_spot_light_count``.
         """
         vp = viewport
@@ -741,7 +808,7 @@ class Renderer3D:
         MAX_PL = s.max_point_lights   # GPU cap (default 8)
         all_pl = point_lights or []
         self.last_point_light_count = len(all_pl)       # total before cull
-        active_pl = _cull_lights(all_pl, camera.position, MAX_PL)
+        active_pl = self._pl_culler.update(all_pl, camera.position, dt)
         self.last_point_lights_active = len(active_pl)  # uploaded to GPU
 
         p["u_num_point_lights"].value = len(active_pl)
@@ -770,7 +837,7 @@ class Renderer3D:
         MAX_SL = 4
         all_sl = spot_lights or []
         self.last_spot_light_count  = len(all_sl)
-        active_sl = _cull_lights(all_sl, camera.position, MAX_SL)
+        active_sl = self._sl_culler.update(all_sl, camera.position, dt)
         self.last_spot_lights_active = len(active_sl)
 
         p["u_num_spot_lights"].value = len(active_sl)
