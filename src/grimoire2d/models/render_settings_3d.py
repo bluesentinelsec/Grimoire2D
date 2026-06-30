@@ -31,8 +31,8 @@ class RenderSettings3D:
     fxaa: bool = False
     bloom: bool = False
 
-    # Light budget — lower on constrained hardware
-    max_point_lights: int = 8
+    # Light budget — lower on constrained hardware; must match GLSL array size in shaders3d.py
+    max_point_lights: int = 24
 
     # Delta-time cap: prevents simulation spiral-of-death when the process is
     # paused (e.g. under a debugger). No more than this many seconds of

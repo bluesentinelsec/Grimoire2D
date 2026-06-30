@@ -448,7 +448,7 @@ def run() -> None:
         r.draw_text(
             f"Cam ({pos.x:+.1f}, {pos.y:+.1f}, {pos.z:+.1f})  "
             f"vy={vy:+.1f}  |  "
-            f"Point lights: {active_pl}/{total_pl} rendered (fade culling)  "
+            f"Point lights: {active_pl}/{total_pl} rendered  "
             f"Spot lights: {active_sl}/{total_sl}",
             VW - 980, 8, font_size=18, color=(0.6, 0.70, 0.85, 1.0),
         )

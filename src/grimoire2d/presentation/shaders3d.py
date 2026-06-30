@@ -77,15 +77,15 @@ uniform bool  u_dir_light_on;
 uniform vec3  u_dir_light_dir;    // direction light *travels* (toward surfaces)
 uniform vec3  u_dir_light_color;
 
-// Point lights — parallel arrays, max 8
+// Point lights — parallel arrays, max 24
 // Array uniforms must be uploaded to the base name (not "u_pl_pos[0]") on
 // macOS/Metal.  The `if (i < count)` guard (not `break`) keeps all slots
 // nominally reachable so the driver does not prune them at link time.
 uniform int   u_num_point_lights;
-uniform vec3  u_pl_pos[8];
-uniform vec3  u_pl_color[8];
-uniform float u_pl_radius[8];
-uniform float u_pl_intensity[8];
+uniform vec3  u_pl_pos[24];
+uniform vec3  u_pl_color[24];
+uniform float u_pl_radius[24];
+uniform float u_pl_intensity[24];
 
 // Spot lights — parallel arrays, max 4
 uniform int   u_num_spot_lights;
@@ -157,7 +157,7 @@ void main() {
     }
 
     // Point lights
-    for (int i = 0; i < 8; i++) {
+    for (int i = 0; i < 24; i++) {
         if (i < u_num_point_lights) {
             vec3  to_light = u_pl_pos[i] - v_world_pos;
             float dist     = length(to_light);
