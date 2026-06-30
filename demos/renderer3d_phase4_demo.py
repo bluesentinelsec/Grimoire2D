@@ -206,52 +206,48 @@ def draw_room(r3d: Renderer3D, flashlight_on: bool, flashlight: SpotLight) -> No
     WIN_C    = (0.55, 0.70, 0.90, 0.35)   # translucent glass tint
 
     W, H, L = ROOM_W, ROOM_H, ROOM_L
+    SW, SL  = SIDE_W, SIDE_L
 
-    # Floor (main corridor)
-    r3d.draw_quad((0, 0, 0), (W, 0, 0), (W, 0, L), (0, 0, L),       FLOOR_C)
-    # Floor (side room)
-    r3d.draw_quad((W, 0, 0), (W + SIDE_W, 0, 0),
-                  (W + SIDE_W, 0, SIDE_L), (W, 0, SIDE_L),           FLOOR_C)
+    # draw_quad normal = cross(p1−p0, p3−p0).  All faces are wound so the
+    # normal points INTO the room (toward the lights and the camera).
+    # Rule of thumb: list vertices CCW as seen from inside the room.
 
-    # Ceiling (main corridor)
-    r3d.draw_quad((0, H, L), (W, H, L), (W, H, 0), (0, H, 0),       CEIL_C)
-    # Ceiling (side room)
-    r3d.draw_quad((W, H, SIDE_L), (W + SIDE_W, H, SIDE_L),
-                  (W + SIDE_W, H, 0), (W, H, 0),                     CEIL_C)
+    # --- Floors (normal = +Y) ---
+    r3d.draw_quad((0, 0, 0), (0, 0, L), (W, 0, L), (W, 0, 0),           FLOOR_C)
+    r3d.draw_quad((W, 0, 0), (W, 0, SL), (W+SW, 0, SL), (W+SW, 0, 0),  FLOOR_C)
 
-    # Left wall (X=0)
-    r3d.draw_quad((0, 0, L), (0, 0, 0), (0, H, 0), (0, H, L),       WALL_C)
+    # --- Ceilings (normal = −Y) ---
+    r3d.draw_quad((0, H, L), (0, H, 0), (W, H, 0), (W, H, L),           CEIL_C)
+    r3d.draw_quad((W, H, SL), (W, H, 0), (W+SW, H, 0), (W+SW, H, SL),  CEIL_C)
 
-    # Right wall of corridor (X=ROOM_W), only where side room is NOT
-    r3d.draw_quad((W, 0, L), (W, 0, SIDE_L), (W, H, SIDE_L), (W, H, L),   WALL_C)
+    # --- Left wall  X=0  (normal = +X) ---
+    r3d.draw_quad((0, 0, L), (0, 0, 0), (0, H, 0), (0, H, L),           WALL_C)
 
-    # Near wall (Z=0)
-    r3d.draw_quad((0, 0, 0), (W, 0, 0), (W, H, 0), (0, H, 0),       WALL_C)
-    # Near wall continues into side room
-    r3d.draw_quad((W, 0, 0), (W + SIDE_W, 0, 0),
-                  (W + SIDE_W, H, 0), (W, H, 0),                     SIDE_C)
+    # --- Right wall  X=W  (normal = −X, corridor section only) ---
+    r3d.draw_quad((W, 0, L), (W, H, L), (W, H, SL), (W, 0, SL),         WALL_C)
 
-    # Far wall (Z=ROOM_L) — 4 sections around the window
+    # --- Near walls  Z=0  (normal = +Z) ---
+    r3d.draw_quad((0, 0, 0), (W, 0, 0), (W, H, 0), (0, H, 0),           WALL_C)
+    r3d.draw_quad((W, 0, 0), (W+SW, 0, 0), (W+SW, H, 0), (W, H, 0),    SIDE_C)
+
+    # --- Far wall  Z=L  (normal = −Z) — split around window ---
     WIN_X0, WIN_X1 = WIN_Z0, WIN_Z1
-    # Bottom strip full width
-    r3d.draw_quad((0, 0, L), (W, 0, L), (W, WIN_Y0, L), (0, WIN_Y0, L),  WALL_C)
-    # Top strip full width
-    r3d.draw_quad((0, WIN_Y1, L), (W, WIN_Y1, L), (W, H, L), (0, H, L),  WALL_C)
+    # Bottom strip
+    r3d.draw_quad((0, 0, L), (0, WIN_Y0, L), (W, WIN_Y0, L), (W, 0, L),           WALL_C)
+    # Top strip
+    r3d.draw_quad((0, WIN_Y1, L), (0, H, L), (W, H, L), (W, WIN_Y1, L),           WALL_C)
     # Left of window
-    r3d.draw_quad((0, WIN_Y0, L), (WIN_X0, WIN_Y0, L),
-                  (WIN_X0, WIN_Y1, L), (0, WIN_Y1, L),               WALL_C)
+    r3d.draw_quad((0, WIN_Y0, L), (0, WIN_Y1, L), (WIN_X0, WIN_Y1, L), (WIN_X0, WIN_Y0, L), WALL_C)
     # Right of window
-    r3d.draw_quad((WIN_X1, WIN_Y0, L), (W, WIN_Y0, L),
-                  (W, WIN_Y1, L), (WIN_X1, WIN_Y1, L),               WALL_C)
-    # Window glass (drawn last so alpha blends over sky)
-    r3d.draw_quad((WIN_X0, WIN_Y0, L), (WIN_X1, WIN_Y0, L),
-                  (WIN_X1, WIN_Y1, L), (WIN_X0, WIN_Y1, L),          WIN_C)
+    r3d.draw_quad((WIN_X1, WIN_Y0, L), (WIN_X1, WIN_Y1, L), (W, WIN_Y1, L), (W, WIN_Y0, L), WALL_C)
+    # Window glass (drawn last so alpha blends over sky; same −Z normal)
+    r3d.draw_quad((WIN_X0, WIN_Y0, L), (WIN_X0, WIN_Y1, L), (WIN_X1, WIN_Y1, L), (WIN_X1, WIN_Y0, L), WIN_C)
 
-    # Side room walls
-    r3d.draw_quad((W, 0, SIDE_L), (W + SIDE_W, 0, SIDE_L),
-                  (W + SIDE_W, H, SIDE_L), (W, H, SIDE_L),           SIDE_C)
-    r3d.draw_quad((W + SIDE_W, 0, 0), (W + SIDE_W, 0, SIDE_L),
-                  (W + SIDE_W, H, SIDE_L), (W + SIDE_W, H, 0),       SIDE_C)
+    # --- Side room walls ---
+    # Far wall of side room  Z=SL  (normal = −Z)
+    r3d.draw_quad((W, 0, SL), (W, H, SL), (W+SW, H, SL), (W+SW, 0, SL),  SIDE_C)
+    # Outer wall  X=W+SW  (normal = −X)
+    r3d.draw_quad((W+SW, 0, 0), (W+SW, 0, SL), (W+SW, H, SL), (W+SW, H, 0), SIDE_C)
 
     # A few pillars / props using existing primitives
     for px, pz in [(3, 7), (17, 7), (3, 21), (17, 21)]:
