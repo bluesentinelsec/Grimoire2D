@@ -5,7 +5,7 @@ required throughout Grimoire2D).
 
 Programs:
 
-PHONG  — full Phong lighting: ambient + directional + up to 8 point lights
+PHONG  — full Phong lighting: ambient + directional + up to 24 point lights
          + up to 4 spot lights, with optional specular, fog, shadow mapping,
          and texture sampling.
 
@@ -17,6 +17,11 @@ SKY    — procedural gradient sky rendered before scene geometry.
          Covers the screen via a single covering triangle (gl_VertexID);
          reconstructs world-space ray directions from the inverse VP matrices
          to blend zenith / horizon / ground colours.
+
+BLIT   — final post-processing blit from the intermediate scene FBO to the
+         screen.  Applies gamma correction and brightness in a single pass.
+         Additional post-processing passes (bloom, FXAA, …) are composited
+         before or after this pass as separate programs.
 """
 
 # ---------------------------------------------------------------------------
@@ -313,6 +318,47 @@ void main() {
         // horizon → ground: linear, compressed to bottom quarter of view
         color = mix(u_sky_horizon, u_sky_ground, clamp(-t * 3.0, 0.0, 1.0));
     }
+    frag_color = vec4(color, 1.0);
+}
+"""
+
+# ---------------------------------------------------------------------------
+# Post-processing blit — gamma correction + brightness
+# ---------------------------------------------------------------------------
+# Covering triangle via gl_VertexID (no VBO).  UVs map [−1,1] NDC to [0,1].
+# Additional post-processing passes plug in before this final blit.
+
+BLIT_VERT = """
+#version 330 core
+
+out vec2 v_uv;
+
+void main() {
+    vec2 pos = vec2(
+        float((gl_VertexID & 1) * 2) * 2.0 - 1.0,
+        float((gl_VertexID >> 1) * 2) * 2.0 - 1.0
+    );
+    v_uv        = pos * 0.5 + 0.5;
+    gl_Position = vec4(pos, 0.0, 1.0);
+}
+"""
+
+BLIT_FRAG = """
+#version 330 core
+
+in vec2 v_uv;
+
+uniform sampler2D u_scene;
+uniform float     u_brightness;
+uniform float     u_gamma;
+
+out vec4 frag_color;
+
+void main() {
+    vec3 color = texture(u_scene, v_uv).rgb;
+    color      = clamp(color * u_brightness, 0.0, 1.0);
+    // Gamma correction: linearise display output
+    color      = pow(color, vec3(1.0 / max(u_gamma, 0.01)));
     frag_color = vec4(color, 1.0);
 }
 """

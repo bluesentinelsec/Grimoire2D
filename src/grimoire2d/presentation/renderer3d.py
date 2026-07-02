@@ -54,6 +54,7 @@ from grimoire2d.presentation.shaders3d import (
     WIRE_VERT, WIRE_FRAG,
     SHADOW_VERT, SHADOW_FRAG,
     SKY_VERT, SKY_FRAG,
+    BLIT_VERT, BLIT_FRAG,
 )
 
 if TYPE_CHECKING:
@@ -573,6 +574,116 @@ class LightCuller:
 
 
 # ---------------------------------------------------------------------------
+# Post-processing pipeline
+# ---------------------------------------------------------------------------
+
+class _PostProcessPipeline:
+    """Intermediate scene FBO + ordered post-processing pass chain.
+
+    The 3D scene renders into ``scene_fbo`` (an off-screen color + depth
+    buffer).  Calling ``run()`` executes every enabled pass in order and
+    blits the final result to the default (screen) framebuffer.
+
+    The terminal pass always applies gamma correction and brightness
+    adjustment so no separate blit is needed when other passes are off.
+
+    Adding a new pass
+    -----------------
+    1. Add a GLSL program to shaders3d.py.
+    2. Add an enable flag (and any tuning floats) to RenderSettings3D.
+    3. Compile the program in ``__init__`` and call it inside ``run()``
+       using ping-pong between ``_ping_fbo`` / ``_pong_fbo``.
+    """
+
+    def __init__(
+        self,
+        ctx: moderngl.Context,
+        settings: RenderSettings3D,
+        width: int,
+        height: int,
+    ) -> None:
+        self._ctx      = ctx
+        self._settings = settings
+        self._w = self._h = 0
+        self._scene_color: moderngl.Texture | None       = None
+        self._scene_depth: moderngl.Texture | None       = None
+        self._scene_fbo:   moderngl.Framebuffer | None   = None
+
+        # Gamma + brightness blit — always the terminal pass
+        self._blit_prog = ctx.program(
+            vertex_shader=BLIT_VERT, fragment_shader=BLIT_FRAG,
+        )
+        self._blit_prog["u_scene"].value = 0
+        self._blit_vao = ctx.vertex_array(self._blit_prog, [])   # no VBO needed
+
+        self._resize(width, height)
+
+    # ------------------------------------------------------------------
+    # FBO lifecycle
+    # ------------------------------------------------------------------
+
+    def _resize(self, width: int, height: int) -> None:
+        if self._scene_fbo is not None:
+            self._scene_fbo.release()
+            self._scene_color.release()
+            self._scene_depth.release()
+
+        self._w = width
+        self._h = height
+        self._scene_color = self._ctx.texture((width, height), 4)
+        self._scene_color.filter = (moderngl.LINEAR, moderngl.LINEAR)
+        self._scene_depth = self._ctx.depth_texture((width, height))
+        self._scene_fbo   = self._ctx.framebuffer(
+            color_attachments=[self._scene_color],
+            depth_attachment=self._scene_depth,
+        )
+
+    def ensure_size(self, width: int, height: int) -> None:
+        """Recreate the scene FBO if the render dimensions changed."""
+        if width != self._w or height != self._h:
+            self._resize(width, height)
+
+    # ------------------------------------------------------------------
+    # Properties used by Renderer3D
+    # ------------------------------------------------------------------
+
+    @property
+    def scene_fbo(self) -> moderngl.Framebuffer:
+        """Bind this before drawing the 3D scene."""
+        return self._scene_fbo
+
+    @property
+    def scene_depth(self) -> moderngl.Texture:
+        """Depth texture of the scene FBO (used only for depth testing)."""
+        return self._scene_depth
+
+    # ------------------------------------------------------------------
+    # Execute pass chain
+    # ------------------------------------------------------------------
+
+    def run(self, screen_viewport: tuple[int, int, int, int]) -> None:
+        """Run all enabled post-processing passes then blit to the screen.
+
+        ``screen_viewport`` is the letterboxed destination on the default
+        framebuffer: ``(x, y, width, height)`` in physical pixels.
+
+        Future passes (bloom, FXAA, etc.) ping-pong between additional
+        FBOs and write their output into ``_scene_color`` before this
+        terminal blit runs.
+        """
+        s = self._settings
+        self._ctx.screen.use()
+        self._ctx.disable(moderngl.DEPTH_TEST)
+        self._ctx.viewport = screen_viewport
+
+        # Terminal pass: gamma correction + brightness → screen
+        self._scene_color.use(0)
+        self._blit_prog["u_brightness"].value = float(s.brightness)
+        self._blit_prog["u_gamma"].value      = float(max(s.gamma, 0.01))
+        self._blit_vao.render(moderngl.TRIANGLES, vertices=3)
+
+
+# ---------------------------------------------------------------------------
 # Renderer3D
 # ---------------------------------------------------------------------------
 
@@ -663,6 +774,11 @@ class Renderer3D:
         # Texture cache: resolved absolute path → moderngl.Texture
         self._texture_cache: dict[Path, moderngl.Texture] = {}
 
+        # Post-processing pipeline — scene renders into an intermediate FBO;
+        # end_scene() runs the pass chain and blits to the screen viewport.
+        # Initialised to 1×1; resized automatically on the first begin_scene().
+        self._pp = _PostProcessPipeline(ctx, self.settings, 1, 1)
+
     @property
     def shadow_map_size(self) -> int:
         """Physical pixel size of the shadow map (square). Derived from display at init."""
@@ -745,20 +861,25 @@ class Renderer3D:
         """
         vp = viewport
         self._last_viewport = vp
-        self.ctx.viewport = (vp.viewport_x, vp.viewport_y, vp.viewport_width, vp.viewport_height)
 
-        # Clear depth (and colour if no gradient sky)
+        # Compute scene render resolution (render_scale applied here)
+        rs = max(0.1, self.settings.render_scale)
+        scene_w = max(1, round(vp.viewport_width  * rs))
+        scene_h = max(1, round(vp.viewport_height * rs))
+        self._pp.ensure_size(scene_w, scene_h)
+
+        # Redirect rendering into the intermediate scene FBO
+        self._pp.scene_fbo.use()
+        self.ctx.viewport = (0, 0, scene_w, scene_h)
+
+        # Clear the scene FBO (full buffer — no letterbox sub-rect needed)
         if sky is None:
             r, g, b, a = sky_color
-            self.ctx.clear(r, g, b, a, depth=1.0,
-                           viewport=(vp.viewport_x, vp.viewport_y,
-                                     vp.viewport_width, vp.viewport_height))
+            self.ctx.clear(r, g, b, a, depth=1.0)
         else:
-            self.ctx.clear(0.0, 0.0, 0.0, 1.0, depth=1.0,
-                           viewport=(vp.viewport_x, vp.viewport_y,
-                                     vp.viewport_width, vp.viewport_height))
+            self.ctx.clear(0.0, 0.0, 0.0, 1.0, depth=1.0)
 
-        aspect = vp.viewport_width / vp.viewport_height if vp.viewport_height else 1.0
+        aspect = scene_w / scene_h if scene_h else 1.0
         view = camera.get_view_matrix()
         proj = camera.get_projection_matrix(aspect)
 
@@ -887,12 +1008,15 @@ class Renderer3D:
         w["u_proj"].value = _mat4(proj)
 
     def end_scene(self) -> None:
-        """Disable depth test so subsequent 2D drawing works correctly."""
-        self.ctx.disable(moderngl.DEPTH_TEST)
+        """Run the post-processing chain, blit to screen, restore HUD viewport."""
         if self._last_viewport:
             vp = self._last_viewport
-            self.ctx.viewport = (vp.viewport_x, vp.viewport_y,
-                                  vp.viewport_width, vp.viewport_height)
+            screen_vp = (vp.viewport_x, vp.viewport_y,
+                         vp.viewport_width, vp.viewport_height)
+            self._pp.run(screen_vp)
+            # Restore viewport and depth state for subsequent 2D HUD drawing
+            self.ctx.viewport = screen_vp
+        self.ctx.disable(moderngl.DEPTH_TEST)
 
     # ------------------------------------------------------------------
     # Primitive draw calls

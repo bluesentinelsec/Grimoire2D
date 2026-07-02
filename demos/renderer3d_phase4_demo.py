@@ -20,6 +20,8 @@ Controls:
   Shift+S             toggle specular
   Shift+H             toggle shadows
   Shift+F             toggle fog
+  [ / ]               decrease / increase gamma (0.5 – 3.0)
+  - / =               decrease / increase brightness (0.1 – 2.0)
   ESC                 release mouse / quit
 """
 
@@ -384,6 +386,15 @@ def run() -> None:
                     settings.shadows = not settings.shadows
                 elif shift and event.key == pygame.K_f:
                     settings.fog = not settings.fog
+                # Gamma / brightness
+                elif event.key == pygame.K_LEFTBRACKET:
+                    settings.gamma = round(max(0.5, settings.gamma - 0.1), 2)
+                elif event.key == pygame.K_RIGHTBRACKET:
+                    settings.gamma = round(min(3.0, settings.gamma + 0.1), 2)
+                elif event.key == pygame.K_MINUS:
+                    settings.brightness = round(max(0.1, settings.brightness - 0.05), 2)
+                elif event.key == pygame.K_EQUALS:
+                    settings.brightness = round(min(2.0, settings.brightness + 0.05), 2)
             elif event.type == pygame.KEYUP:
                 keys_held.discard(event.key)
             elif event.type == pygame.MOUSEMOTION and mouse_captured:
@@ -484,9 +495,10 @@ def run() -> None:
             14, 8, font_size=26, color=(0.9, 0.95, 1.0, 1.0),
         )
         r.draw_text(
-            f"[F] Flashlight: {fl}   [⇧G] Gravity: {grav}   "
-            f"[⇧S] Specular: {spec}   [⇧H] Shadows: {shad}   [⇧F] Fog: {fog}   "
-            f"WASD+QE  Click=capture  ESC=release/quit",
+            f"[F] Flash: {fl}  [⇧G] Gravity: {grav}  [⇧S] Spec: {spec}  "
+            f"[⇧H] Shadows: {shad}  [⇧F] Fog: {fog}  "
+            f"[[ ]] Gamma: {settings.gamma:.1f}  [-  =] Bright: {settings.brightness:.2f}  "
+            f"WASD+QE  Click=capture  ESC=quit",
             14, 38, font_size=18, color=(0.6, 0.70, 0.85, 1.0),
         )
 
